@@ -172,6 +172,99 @@ docker run -d \
   semp-server
 ```
 
+## Connecting with the Reference Client
+
+The [SEMP Reference Client](https://github.com/semp-dev/semp-reference-client) provides both a CLI and a desktop GUI for connecting to a deployed server. The examples below assume your server is at `semp.example.com` with users `alice@example.com` and `bob@example.com`.
+
+### Install the Client
+
+```bash
+git clone https://github.com/semp-dev/semp-reference-client.git
+cd semp-reference-client
+go build -o semp-client ./cmd/semp-client/
+```
+
+### Create a Config for Each User
+
+```toml
+# alice.toml
+identity = "alice@example.com"
+domain   = "example.com"
+server   = "wss://semp.example.com/v1/ws"
+
+[database]
+path = "alice.db"
+
+[tls]
+insecure = false
+```
+
+Create a separate file for Bob (or any other user) with their address and a different database path.
+
+### Generate Keys
+
+Each user must generate their keypair once before connecting:
+
+```bash
+./semp-client -config alice.toml init
+./semp-client -config bob.toml init
+```
+
+### Send and Receive Messages
+
+```bash
+# Alice sends a message to Bob
+./semp-client -config alice.toml send \
+  -to bob@example.com \
+  -subject "Hello from SEMP" \
+  -body "End-to-end encrypted, post-quantum ready."
+
+# Bob fetches and decrypts his pending messages
+./semp-client -config bob.toml fetch
+
+# Bob lists his inbox and reads the message
+./semp-client -config bob.toml inbox
+./semp-client -config bob.toml read <message-id>
+```
+
+### Other Commands
+
+```bash
+# Check connection status and key fingerprints
+./semp-client -config alice.toml status
+
+# Look up a recipient's public keys
+./semp-client -config alice.toml keys -address bob@example.com
+
+# Export a message as a portable .semp file
+./semp-client -config bob.toml export <message-id> -o message.semp
+
+# Import and decrypt a .semp file
+./semp-client -config bob.toml import message.semp
+
+# List sent messages
+./semp-client -config alice.toml sent
+```
+
+### Desktop GUI
+
+The client also includes a Fyne-based desktop GUI with inbox, compose, and contact management:
+
+```bash
+go run ./cmd/semp-gui -config alice.toml
+```
+
+### Local Development (No TLS)
+
+When running the server locally without TLS, use `ws://` and enable insecure mode:
+
+```toml
+server = "ws://localhost:8443/v1/ws"
+
+[tls]
+insecure = true
+```
+
 ## Architecture
 
 The server is built on `semp-go` and follows the same wiring pattern as the library's demo binary, structured for production use:
@@ -199,7 +292,7 @@ The in-memory `delivery.Inbox` required by the library is backed by SQLite for p
 
 ## Roadmap
 
-- [ ] **Reference client implementation** — a companion CLI client in this repository for end-to-end testing and demonstration of the full SEMP flow (handshake, send, receive, key management)
+- [x] **Reference client** — see [semp-reference-client](https://github.com/semp-dev/semp-reference-client) (CLI + desktop GUI)
 - [ ] Registration API for runtime user and device provisioning
 - [ ] Encrypted-at-rest private key storage (KEY.md section 9)
 - [ ] Structured metrics and tracing
