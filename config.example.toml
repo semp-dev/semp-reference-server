@@ -1,0 +1,46 @@
+# SEMP Reference Server Configuration
+# Copy this file to semp.toml and adjust for your deployment.
+
+# The domain this server operates for. All user addresses must be @domain.
+domain = "example.com"
+
+# Address and port the server listens on.
+listen_addr = ":8443"
+
+# TLS certificate and private key. Omit both for plain HTTP (dev only).
+[tls]
+# cert_file = "/etc/semp/cert.pem"
+# key_file  = "/etc/semp/key.pem"
+
+# SQLite database path. Created automatically on first run.
+[database]
+path = "semp.db"
+
+# Provisioned user accounts. Keys are generated on first run.
+[[users]]
+address = "alice@example.com"
+
+[[users]]
+address = "bob@example.com"
+
+# Federation settings for cross-domain delivery.
+[federation]
+session_ttl = 3600   # Federation session lifetime in seconds.
+retention   = "7d"   # Message retention declaration to peers.
+
+# Static federation peer. Omit endpoint to use DNS/well-known discovery.
+# [[federation.peers]]
+# domain             = "other.example"
+# endpoint           = "wss://other.example/v1/federate"
+# domain_signing_key = "base64-encoded-ed25519-public-key"
+
+# Operator policy for client sessions.
+[policy]
+session_ttl     = 300                # Client session TTL in seconds.
+blocked_domains = []                 # Domains to reject at handshake.
+permissions     = ["send", "receive"]
+
+# Logging configuration.
+[logging]
+level  = "info"   # debug, info, warn, error
+format = "text"   # text or json
