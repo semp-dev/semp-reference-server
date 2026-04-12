@@ -1,0 +1,40 @@
+# SEMP Reference Server — production deployment config.
+# Replace "example.com" with your actual domain.
+
+domain = "example.com"
+
+# Listen on plain HTTP inside the container. Caddy handles TLS termination.
+listen_addr = ":8443"
+
+# No TLS here — Caddy provides HTTPS with automatic Let's Encrypt certs.
+# [tls]
+# cert_file = ""
+# key_file  = ""
+
+[database]
+path = "/var/lib/semp/semp.db"
+
+[[users]]
+address = "alice@example.com"
+
+[[users]]
+address = "bob@example.com"
+
+[federation]
+session_ttl = 3600
+retention   = "7d"
+
+# Add federation peers:
+# [[federation.peers]]
+# domain             = "other.example"
+# endpoint           = "wss://other.example/v1/federate"
+# domain_signing_key = "base64-encoded-ed25519-public-key"
+
+[policy]
+session_ttl     = 300
+blocked_domains = []
+permissions     = ["send", "receive"]
+
+[logging]
+level  = "info"
+format = "json"
