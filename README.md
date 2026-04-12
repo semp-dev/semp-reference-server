@@ -95,8 +95,21 @@ The quickest way to deploy on a real server with automatic HTTPS.
 ### Prerequisites
 
 - A server with a public IP
-- A domain with an A record pointing to that IP (e.g. `mail.example.com`)
+- A domain with an A record pointing to that IP
 - Docker and Docker Compose installed
+
+### Choosing a Hostname
+
+The server hostname (where the server is reachable) is independent of the email domain (what goes after `@` in user addresses). You can use any subdomain — or no subdomain at all:
+
+| Email domain | Server hostname | Works? |
+|---|---|---|
+| `example.com` | `mail.example.com` | Yes |
+| `example.com` | `semp.example.com` | Yes |
+| `example.com` | `msg.example.com` | Yes |
+| `example.com` | `example.com` | Yes |
+
+The `domain` field in `semp.toml` is always the **email domain** (e.g. `example.com`). The `SEMP_DOMAIN` environment variable is the **server hostname** that Caddy binds the TLS certificate to. DNS SRV records tell other servers how to find yours regardless of which hostname you pick.
 
 ### Deploy
 
@@ -107,8 +120,8 @@ cd semp-reference-server/deploy
 # Edit the config — replace example.com with your domain and users
 vim semp.toml
 
-# Set the domain for Caddy
-export SEMP_DOMAIN=mail.example.com
+# Set the hostname Caddy will serve (any subdomain you like)
+export SEMP_DOMAIN=semp.example.com
 
 # Start
 docker compose up -d
@@ -116,21 +129,26 @@ docker compose up -d
 
 Caddy automatically obtains and renews Let's Encrypt TLS certificates. The server is reachable at:
 
-- `wss://mail.example.com/v1/ws` — client connections
-- `wss://mail.example.com/v1/federate` — federation peers
-- `https://mail.example.com/.well-known/semp/configuration` — discovery
+- `wss://semp.example.com/v1/ws` — client connections
+- `wss://semp.example.com/v1/federate` — federation peers
+- `https://semp.example.com/.well-known/semp/configuration` — discovery
 
 ### DNS Records
 
-For full SEMP discovery (DISCOVERY.md), add these DNS records for your domain:
+Point your chosen hostname to the server, then add SEMP discovery records for the email domain:
 
 ```
-; SRV record — tells other servers where to connect
-_semp._tcp.example.com. 3600 IN SRV 10 1 443 mail.example.com.
+; A record — point your hostname to the server
+semp.example.com. 3600 IN A 203.0.113.10
 
-; TXT record — advertises SEMP support
+; SRV record — tells other SEMP servers where to reach @example.com users
+_semp._tcp.example.com. 3600 IN SRV 10 1 443 semp.example.com.
+
+; TXT record — advertises SEMP support for the domain
 _semp._tcp.example.com. 3600 IN TXT "v=semp1"
 ```
+
+The SRV record is the key: it maps the email domain (`example.com`) to the server hostname (`semp.example.com`). Federation peers and remote clients use this to discover your endpoint.
 
 ### Data
 
