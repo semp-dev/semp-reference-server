@@ -1,0 +1,33 @@
+services:
+  semp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - semp-data:/var/lib/semp
+      - ./semp.toml:/etc/semp/semp.toml:ro
+    networks:
+      - semp
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - semp
+
+volumes:
+  semp-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  semp:

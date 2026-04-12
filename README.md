@@ -22,7 +22,7 @@ This server demonstrates real-world deployment of the SEMP protocol: client conn
 
 ```bash
 # Clone and build
-git clone https://github.com/seyitgkc/semp-reference-server.git
+git clone https://github.com/semp-dev/semp-reference-server.git
 cd semp-reference-server
 go build -o semp-server ./cmd/semp-server/
 
@@ -86,6 +86,72 @@ Peers without an explicit endpoint are resolved via DNS SRV/TXT and well-known U
 session_ttl     = 300                  # Client session lifetime in seconds
 blocked_domains = ["spam.example"]     # Rejected at handshake
 permissions     = ["send", "receive"]
+```
+
+## Docker Deployment
+
+The quickest way to deploy on a real server with automatic HTTPS.
+
+### Prerequisites
+
+- A server with a public IP
+- A domain with an A record pointing to that IP (e.g. `mail.example.com`)
+- Docker and Docker Compose installed
+
+### Deploy
+
+```bash
+git clone https://github.com/semp-dev/semp-reference-server.git
+cd semp-reference-server/deploy
+
+# Edit the config — replace example.com with your domain and users
+vim semp.toml
+
+# Set the domain for Caddy
+export SEMP_DOMAIN=mail.example.com
+
+# Start
+docker compose up -d
+```
+
+Caddy automatically obtains and renews Let's Encrypt TLS certificates. The server is reachable at:
+
+- `wss://mail.example.com/v1/ws` — client connections
+- `wss://mail.example.com/v1/federate` — federation peers
+- `https://mail.example.com/.well-known/semp/configuration` — discovery
+
+### DNS Records
+
+For full SEMP discovery (DISCOVERY.md), add these DNS records for your domain:
+
+```
+; SRV record — tells other servers where to connect
+_semp._tcp.example.com. 3600 IN SRV 10 1 443 mail.example.com.
+
+; TXT record — advertises SEMP support
+_semp._tcp.example.com. 3600 IN TXT "v=semp1"
+```
+
+### Data
+
+SQLite database is persisted in a Docker volume (`semp-data`). Back it up with:
+
+```bash
+docker compose exec semp cp /var/lib/semp/semp.db /var/lib/semp/semp.db.bak
+docker cp $(docker compose ps -q semp):/var/lib/semp/semp.db.bak ./semp-backup.db
+```
+
+### Standalone Docker (without Caddy)
+
+If you handle TLS externally:
+
+```bash
+docker build -t semp-server .
+docker run -d \
+  -v ./semp.toml:/etc/semp/semp.toml:ro \
+  -v semp-data:/var/lib/semp \
+  -p 8443:8443 \
+  semp-server
 ```
 
 ## Architecture

@@ -1,0 +1,10 @@
+{$SEMP_DOMAIN:example.com} {
+	# WebSocket endpoints — proxy with upgrade support
+	@websocket {
+		path /v1/ws /v1/federate
+	}
+	reverse_proxy @websocket semp:8443
+
+	# Well-known and all other paths
+	reverse_proxy semp:8443
+}
