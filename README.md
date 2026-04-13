@@ -225,8 +225,8 @@ Since this reference server generates user keys on first boot, export them and i
 # Alice sends a message to Bob
 ./semp-client -config alice.toml send \
   -to bob@example.com \
-  -subject "Hello from SEMP" \
-  -body "End-to-end encrypted, post-quantum ready."
+  -subject "Hello" \
+  -body 'Just SEMPing real quick'
 
 # Bob fetches and decrypts his pending messages
 ./semp-client -config bob.toml fetch
@@ -234,6 +234,52 @@ Since this reference server generates user keys on first boot, export them and i
 # Bob lists his inbox and reads the message
 ./semp-client -config bob.toml inbox
 ./semp-client -config bob.toml read <message-id>
+```
+
+### Example Output
+
+Real output from a live deployment:
+
+**Alice sends:**
+```
+$ ./semp-client -config alice.toml send -to bob@example.com -subject "Hello" -body 'Just SEMPing real quick'
+level=INFO msg=connected server=wss://semp.example.com/v1/ws
+level=INFO msg="session established" session_id=06ERA4E8HSKAK83ZJQN5NBNXTC ttl=5m0s
+level=INFO msg="envelope sent" message_id=alice@example.com-1776054028518410000 to=[bob@example.com]
+Envelope submitted: alice@example.com-1776054028518410000
+  bob@example.com: delivered
+```
+
+**Server log:**
+```
+level=INFO msg="client connected" peer=192.168.1.10:40648
+level=INFO msg="client session established" session=06ERA4E8HSKAK83ZJQN5NBNXTC identity=alice@example.com ttl=5m0s
+level=INFO msg="[delivery] delivered: envelope=alice@example.com-1776054028518410000 recipient=bob@example.com sender=alice@example.com"
+level=INFO msg="client disconnected" peer=192.168.1.10:40648
+```
+
+**Bob fetches and reads:**
+```
+$ ./semp-client -config bob.toml fetch
+level=INFO msg=connected server=wss://semp.example.com/v1/ws
+level=INFO msg="session established" session_id=06ERA4P18PF4HPGEHAQX8HKNJM ttl=5m0s
+level=INFO msg="fetched envelopes" count=1 drained=true
+
+--- Message alice@example.com-1776054028518410000 ---
+From:    alice@example.com
+To:      bob@example.com
+Subject: Hello
+Body:
+Just SEMPing real quick
+
+1 message(s) fetched.
+
+$ ./semp-client -config bob.toml inbox
+MESSAGE ID                                        DIR       FROM                       SUBJECT
+----------------------------------------------------------------------------------------------------
+alice@example.com-1776054028518410000           received  alice@example.com       Hello
+
+1 message(s)
 ```
 
 ### Other Commands
