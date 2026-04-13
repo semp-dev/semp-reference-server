@@ -262,10 +262,9 @@ func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 		endpoints["quic"] = "https://" + r.Host + "/v1/quic"
 	}
 	cfg := discovery.Configuration{
-		Version:   semp.ProtocolVersion,
-		Endpoints: endpoints,
-		Features:        []string{},
-		PostQuantum:     "hybrid",
+		Version:         semp.ProtocolVersion,
+		Endpoints:       endpoints,
+		Suites:          s.advertisedSuites(),
 		MaxEnvelopeSize: 25 * 1024 * 1024,
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

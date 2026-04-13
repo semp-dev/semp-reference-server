@@ -299,6 +299,18 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// advertisedSuites returns the suite list for the well-known configuration.
+// The configured suite is listed first (preference order), followed by the
+// baseline suite if it is not already the configured suite.
+func (s *Server) advertisedSuites() []string {
+	id := string(s.suite.ID())
+	baseline := "x25519-chacha20-poly1305"
+	if id == baseline {
+		return []string{baseline}
+	}
+	return []string{id, baseline}
+}
+
 // Close releases resources.
 func (s *Server) Close() error {
 	s.forwarder.Close()
