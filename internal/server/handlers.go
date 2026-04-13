@@ -254,18 +254,36 @@ func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 		wsScheme = "ws"
 		h2Scheme = "http"
 	}
-	endpoints := map[string]string{
-		"h2": h2Scheme + "://" + r.Host + "/v1/h2",
-		"ws": wsScheme + "://" + r.Host + "/v1/ws",
+	host := r.Host
+	clientEndpoints := map[string]string{
+		"h2": h2Scheme + "://" + host + "/v1/h2",
+		"ws": wsScheme + "://" + host + "/v1/ws",
+	}
+	fedEndpoints := map[string]string{
+		"h2": h2Scheme + "://" + host + "/v1/h2/federate",
+		"ws": wsScheme + "://" + host + "/v1/federate",
 	}
 	if s.quicAddr != "" {
-		endpoints["quic"] = "https://" + r.Host + "/v1/quic"
+		clientEndpoints["quic"] = "https://" + host + "/v1/quic"
+		fedEndpoints["quic"] = "https://" + host + "/v1/quic/federate"
 	}
 	cfg := discovery.Configuration{
-		Version:         semp.ProtocolVersion,
-		Endpoints:       endpoints,
-		Suites:          s.advertisedSuites(),
-		MaxEnvelopeSize: 25 * 1024 * 1024,
+		Version: semp.ProtocolVersion,
+		Domain:  s.domain,
+		Endpoints: discovery.ConfigEndpoints{
+			Client:         clientEndpoints,
+			Federation:     fedEndpoints,
+			Register:       h2Scheme + "://" + host + "/v1/register",
+			DeviceRegister: h2Scheme + "://" + host + "/v1/device/register",
+			BlockList:      h2Scheme + "://" + host + "/v1/blocklist",
+			Keys:           h2Scheme + "://" + host + "/.well-known/semp/keys/",
+			DomainKeys:     h2Scheme + "://" + host + "/.well-known/semp/domain-keys",
+		},
+		Suites: s.advertisedSuites(),
+		Limits: discovery.ConfigLimits{
+			MaxEnvelopeSize: 25 * 1024 * 1024,
+		},
+		Extensions: []discovery.ConfigExtension{},
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(cfg)
