@@ -31,8 +31,8 @@ func (s *SQLiteStore) LookupDomainKey(ctx context.Context, domain string) (*keys
 	return scanDomainRow(row, domain)
 }
 
-// LookupDomainEncryptionKey returns the domain encryption key.
-func (s *SQLiteStore) LookupDomainEncryptionKey(ctx context.Context, domain string) (*keys.Record, error) {
+// LookupDomainEncryptionKeyCtx returns the domain encryption key.
+func (s *SQLiteStore) LookupDomainEncryptionKeyCtx(ctx context.Context, domain string) (*keys.Record, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT algorithm, public_key, key_id, created_at, expires_at,
 		        revoked_at, revocation_reason, replacement_key_id
@@ -40,6 +40,13 @@ func (s *SQLiteStore) LookupDomainEncryptionKey(ctx context.Context, domain stri
 		  WHERE domain = ? AND key_type = 'encryption'`,
 		domain)
 	return scanDomainRow(row, domain)
+}
+
+// LookupDomainEncryptionKey satisfies the inboxd domainEncKeyLookup interface
+// so the SEMP_KEYS handler includes the domain encryption key in responses.
+func (s *SQLiteStore) LookupDomainEncryptionKey(domain string) *keys.Record {
+	rec, _ := s.LookupDomainEncryptionKeyCtx(context.Background(), domain)
+	return rec
 }
 
 func scanDomainRow(row *sql.Row, domain string) (*keys.Record, error) {
