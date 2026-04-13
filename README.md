@@ -386,12 +386,12 @@ SQLite (via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), pure Go
 - [x] HTTP/2 transport as mandatory baseline per spec (`/v1/h2`, `/v1/h2/federate`)
 - [x] Well-known domain key publication (`/.well-known/semp/domain-keys`)
 - [x] Cross-domain federation tested across live independent servers
-- [ ] Encrypted-at-rest private key storage (KEY.md section 9)
-- [ ] Structured metrics and tracing
-- [ ] Proof-of-work challenge gating
-- [ ] Block list management API
-- [ ] QUIC transport binding
-- [ ] Multi-device support with scoped device certificates
+- [x] Encrypted-at-rest private keys (AES-256-GCM + Argon2id, configurable `master_key`)
+- [x] Structured metrics at `/debug/metrics` (handshakes, registrations, envelopes, federation)
+- [x] Proof-of-work challenge gating (configurable SHA256 PoW via `[policy.pow]`)
+- [x] Block list management API (`GET/POST/DELETE /v1/blocklist`)
+- [x] QUIC transport binding (optional, requires TLS certificates)
+- [x] Multi-device support (`POST /v1/device/register` with scoped device certificates)
 
 ## Requirements
 
