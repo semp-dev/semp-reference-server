@@ -37,7 +37,8 @@ type DatabaseConfig struct {
 
 // UserConfig defines a provisioned user account.
 type UserConfig struct {
-	Address string `toml:"address"`
+	Address  string `toml:"address"`
+	Password string `toml:"password"`
 }
 
 // FederationConfig controls cross-domain federation behaviour.
@@ -117,6 +118,9 @@ func validate(c *Config) error {
 	for _, u := range c.Users {
 		if u.Address == "" {
 			return fmt.Errorf("config: user address is empty")
+		}
+		if u.Password == "" {
+			return fmt.Errorf("config: user %q has no password", u.Address)
 		}
 		parts := strings.SplitN(u.Address, "@", 2)
 		if len(parts) != 2 || parts[1] != c.Domain {

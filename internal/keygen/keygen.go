@@ -6,7 +6,6 @@ import (
 
 	"semp.dev/semp-go/crypto"
 	"semp.dev/semp-go/keys"
-	"semp.dev/semp-reference-server/internal/config"
 	"semp.dev/semp-reference-server/internal/store"
 )
 
@@ -51,36 +50,4 @@ func EnsureDomainKeys(s *store.SQLiteStore, suite crypto.Suite, domain string, l
 
 	logger.Info("generated new domain keys", "domain", domain, "sign_fp", signFP, "enc_fp", encFP)
 	return signFP, signPriv, encFP, encPriv, nil
-}
-
-// EnsureUserKeys generates identity and encryption key pairs for each
-// configured user that doesn't already have keys.
-func EnsureUserKeys(s *store.SQLiteStore, suite crypto.Suite, users []config.UserConfig, logger *slog.Logger) error {
-	for _, u := range users {
-		has, err := s.HasUserKeys(u.Address)
-		if err != nil {
-			return fmt.Errorf("keygen: check user keys %s: %w", u.Address, err)
-		}
-		if has {
-			logger.Info("user keys exist", "address", u.Address)
-			continue
-		}
-
-		// Identity key (Ed25519).
-		idPub, idPriv, err := suite.Signer().GenerateKeyPair()
-		if err != nil {
-			return fmt.Errorf("keygen: identity key for %s: %w", u.Address, err)
-		}
-		idFP := s.PutUserKeyPair(u.Address, keys.TypeIdentity, "ed25519", idPub, idPriv)
-
-		// Encryption key (KEM).
-		encPub, encPriv, err := suite.KEM().GenerateKeyPair()
-		if err != nil {
-			return fmt.Errorf("keygen: encryption key for %s: %w", u.Address, err)
-		}
-		encFP := s.PutUserKeyPair(u.Address, keys.TypeEncryption, string(suite.ID()), encPub, encPriv)
-
-		logger.Info("generated user keys", "address", u.Address, "identity_fp", idFP, "encryption_fp", encFP)
-	}
-	return nil
 }
