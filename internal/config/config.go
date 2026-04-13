@@ -12,11 +12,17 @@ type Config struct {
 	Domain     string           `toml:"domain"`
 	ListenAddr string           `toml:"listen_addr"`
 	TLS        TLSConfig        `toml:"tls"`
+	Crypto     CryptoConfig     `toml:"crypto"`
 	Database   DatabaseConfig   `toml:"database"`
 	Users      []UserConfig     `toml:"users"`
 	Federation FederationConfig `toml:"federation"`
 	Policy     PolicyConfig     `toml:"policy"`
 	Logging    LoggingConfig    `toml:"logging"`
+}
+
+// CryptoConfig selects the algorithm suite.
+type CryptoConfig struct {
+	Suite string `toml:"suite"`
 }
 
 // TLSConfig holds TLS certificate paths. Both fields must be set or both empty.
@@ -105,6 +111,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Logging.Format == "" {
 		c.Logging.Format = "text"
+	}
+	if c.Crypto.Suite == "" {
+		c.Crypto.Suite = "pq-kyber768-x25519"
 	}
 }
 

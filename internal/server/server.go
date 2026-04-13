@@ -59,7 +59,11 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	sqlStore := store.NewSQLiteStore(db)
 
-	suite := crypto.SuiteBaseline
+	suite := crypto.LookupSuite(crypto.SuiteID(cfg.Crypto.Suite))
+	if suite == nil {
+		return nil, fmt.Errorf("unknown crypto suite: %s", cfg.Crypto.Suite)
+	}
+	logger.Info("crypto suite", "suite", cfg.Crypto.Suite)
 
 	signFP, signPriv, encFP, encPriv, err := keygen.EnsureDomainKeys(
 		sqlStore, suite, cfg.Domain, logger)

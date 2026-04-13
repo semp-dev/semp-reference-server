@@ -12,6 +12,12 @@ listen_addr = ":8443"
 # cert_file = "/etc/semp/cert.pem"
 # key_file  = "/etc/semp/key.pem"
 
+# Cryptographic algorithm suite.
+# "pq-kyber768-x25519" (post-quantum hybrid, recommended)
+# "x25519-chacha20-poly1305" (baseline)
+[crypto]
+suite = "pq-kyber768-x25519"
+
 # SQLite database path. Created automatically on first run.
 [database]
 path = "semp.db"
