@@ -242,14 +242,17 @@ type registerKeyEntry struct {
 }
 
 func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
-	scheme := "wss"
+	wsScheme := "wss"
+	h2Scheme := "https"
 	if s.tlsCert == "" && !s.externalTLS {
-		scheme = "ws"
+		wsScheme = "ws"
+		h2Scheme = "http"
 	}
 	cfg := discovery.Configuration{
 		Version: semp.ProtocolVersion,
 		Endpoints: map[string]string{
-			"ws": scheme + "://" + r.Host + "/v1/ws",
+			"h2": h2Scheme + "://" + r.Host + "/v1/h2",
+			"ws": wsScheme + "://" + r.Host + "/v1/ws",
 		},
 		Features:        []string{},
 		PostQuantum:     "hybrid",
