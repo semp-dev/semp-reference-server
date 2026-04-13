@@ -36,6 +36,8 @@ cp config.example.toml semp.toml
 
 On first run the server generates domain and user keys and stores them in the SQLite database. Subsequent runs load existing keys.
 
+> **Note on key provisioning:** This reference server generates user private keys on the server side for demonstration convenience. In a production SEMP deployment, **user private keys must never leave the client device**. Keys would be generated on the client, and only the public key would be registered with the server via a registration API. The `export-keys` / `import-keys` workflow described below exists solely to make this reference implementation easy to test.
+
 ## Configuration
 
 See [`config.example.toml`](config.example.toml) for all options. Minimal example:
@@ -201,14 +203,21 @@ insecure = false
 
 Create a separate file for Bob (or any other user) with their address and a different database path.
 
-### Generate Keys
+### Provision Keys
 
-Each user must generate their keypair once before connecting:
+Since this reference server generates user keys on first boot, export them and import into the client:
 
 ```bash
-./semp-client -config alice.toml init
-./semp-client -config bob.toml init
+# On the server (or via docker exec)
+./semp-server export-keys -address alice@example.com -o alice-keys.json
+./semp-server export-keys -address bob@example.com -o bob-keys.json
+
+# On the client machine
+./semp-client -config alice.toml import-keys alice-keys.json
+./semp-client -config bob.toml import-keys bob-keys.json
 ```
+
+> **Production note:** This export/import flow is for demonstration only. In a production SEMP deployment, user private keys are generated on the client device and never leave it. The server would only receive the public key through a registration API. See [KEY.md section 9](https://github.com/semp-dev/semp-spec/blob/master/KEY.md) for the specification.
 
 ### Send and Receive Messages
 
