@@ -17,6 +17,7 @@ import (
 	"semp.dev/semp-go/discovery"
 	"semp.dev/semp-go/keys"
 	"semp.dev/semp-go/transport"
+	"semp.dev/semp-go/transport/h2"
 	"semp.dev/semp-go/transport/ws"
 	"semp.dev/semp-reference-server/internal/config"
 	"semp.dev/semp-reference-server/internal/keygen"
@@ -109,9 +110,13 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		logger.Info("registered federation peer", "domain", p.Domain, "endpoint", p.Endpoint)
 	}
 
+	allowInsecure := cfg.TLS.CertFile == "" && !cfg.TLS.ExternalTLS
 	wsTransport := ws.NewWithConfig(ws.Config{
-		AllowInsecure:  cfg.TLS.CertFile == "",
+		AllowInsecure:  allowInsecure,
 		OriginPatterns: []string{"*"},
+	})
+	h2Transport := h2.NewWithConfig(h2.PersistentConfig{
+		Config: h2.Config{AllowInsecure: allowInsecure},
 	})
 
 	resolver := discovery.NewResolver(discovery.ResolverConfig{
@@ -125,7 +130,12 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		LocalDomainPrivateKey: signPriv,
 		Peers:                 peerRegistry,
 		Dial: func(ctx context.Context, endpoint string) (transport.Conn, error) {
-			return wsTransport.Dial(ctx, endpoint)
+			// Try WebSocket first for wss:// endpoints (existing peers),
+			// fall back to HTTP/2 for https:// endpoints (baseline transport).
+			if strings.HasPrefix(endpoint, "wss://") || strings.HasPrefix(endpoint, "ws://") {
+				return wsTransport.Dial(ctx, endpoint)
+			}
+			return h2Transport.Dial(ctx, endpoint)
 		},
 		Store:    sqlStore,
 		Resolver: resolver,
@@ -134,7 +144,11 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 			if err != nil {
 				return "", err
 			}
-			return strings.Replace(ep, "/v1/ws", "/v1/federate", 1), nil
+			// Convert ws:// endpoints to https:// for HTTP/2 federation.
+			ep = strings.Replace(ep, "wss://", "https://", 1)
+			ep = strings.Replace(ep, "ws://", "http://", 1)
+			ep = strings.Replace(ep, "/v1/ws", "/v1/federate", 1)
+			return ep, nil
 		},
 	})
 
@@ -174,16 +188,30 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 func (s *Server) Run(ctx context.Context) error {
 	s.ctx = ctx
 
+	allowInsecure := s.tlsCert == "" && !s.externalTLS
 	wsCfg := ws.Config{
-		AllowInsecure:  s.tlsCert == "",
+		AllowInsecure:  allowInsecure,
 		OriginPatterns: []string{"*"},
+	}
+	h2Cfg := h2.PersistentConfig{
+		Config: h2.Config{AllowInsecure: allowInsecure},
 	}
 
 	mux := http.NewServeMux()
+
+	// WebSocket transport (recommended).
 	mux.Handle("/v1/ws", ws.NewHandler(wsCfg, func(conn transport.Conn) {
 		go s.handleClient(s.ctx, conn)
 	}))
 	mux.Handle("/v1/federate", ws.NewHandler(wsCfg, func(conn transport.Conn) {
+		go s.handleFederation(s.ctx, conn)
+	}))
+
+	// HTTP/2 transport (mandatory baseline per TRANSPORT.md section 4).
+	mux.Handle("/v1/h2", h2.NewPersistentHandler(h2Cfg, func(conn transport.Conn) {
+		go s.handleClient(s.ctx, conn)
+	}))
+	mux.Handle("/v1/h2/federate", h2.NewPersistentHandler(h2Cfg, func(conn transport.Conn) {
 		go s.handleFederation(s.ctx, conn)
 	}))
 	mux.HandleFunc("/v1/register", s.handleRegister)
