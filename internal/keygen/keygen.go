@@ -41,12 +41,15 @@ func EnsureDomainKeys(s *store.SQLiteStore, suite crypto.Suite, domain string, l
 	}
 	signFP = s.PutDomainKeyPair(domain, "signing", "ed25519", signPub, signPriv)
 
-	// Generate encryption key (KEM).
-	encPub, encPriv, err := suite.KEM().GenerateKeyPair()
+	// Generate encryption key. The seal layer always uses X25519 for
+	// per-recipient key wrapping (regardless of session suite), so domain
+	// encryption keys MUST be X25519.
+	baselineKEM := crypto.SuiteBaseline.KEM()
+	encPub, encPriv, err := baselineKEM.GenerateKeyPair()
 	if err != nil {
 		return "", nil, "", nil, fmt.Errorf("keygen: generate encryption key: %w", err)
 	}
-	encFP = s.PutDomainKeyPair(domain, "encryption", string(suite.ID()), encPub, encPriv)
+	encFP = s.PutDomainKeyPair(domain, "encryption", "x25519-chacha20-poly1305", encPub, encPriv)
 
 	logger.Info("generated new domain keys", "domain", domain, "sign_fp", signFP, "enc_fp", encFP)
 	return signFP, signPriv, encFP, encPriv, nil
