@@ -379,13 +379,19 @@ SQLite (via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), pure Go
 
 ## Roadmap
 
-- [x] **Reference client** — see [semp-reference-client](https://github.com/semp-dev/semp-reference-client) (CLI + desktop GUI)
-- [x] Registration API for client key provisioning
-- [x] Automatic federation with lazy domain key discovery
+- [x] **Reference client** (see [semp-reference-client](https://github.com/semp-dev/semp-reference-client), CLI + desktop GUI)
+- [x] Registration API for client key provisioning (`POST /v1/register`)
+- [x] Automatic federation with lazy domain key discovery via DNS SRV
+- [x] Post-quantum crypto suite (`pq-kyber768-x25519` hybrid, configurable)
+- [x] HTTP/2 transport as mandatory baseline per spec (`/v1/h2`, `/v1/h2/federate`)
+- [x] Well-known domain key publication (`/.well-known/semp/domain-keys`)
+- [x] Cross-domain federation tested across live independent servers
 - [ ] Encrypted-at-rest private key storage (KEY.md section 9)
 - [ ] Structured metrics and tracing
 - [ ] Proof-of-work challenge gating
 - [ ] Block list management API
+- [ ] QUIC transport binding
+- [ ] Multi-device support with scoped device certificates
 
 ## Requirements
 
@@ -394,7 +400,7 @@ SQLite (via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), pure Go
 
 ## Dependencies
 
-- [`semp.dev/semp-go`](https://github.com/semp-dev/semp-go) v0.2.1 — SEMP protocol library
+- [`semp.dev/semp-go`](https://github.com/semp-dev/semp-go) v0.2.2 — SEMP protocol library
 - [`github.com/BurntSushi/toml`](https://github.com/BurntSushi/toml) — TOML configuration
 - [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — Pure-Go SQLite driver
 
