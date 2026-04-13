@@ -292,6 +292,19 @@ func (s *SQLiteStore) LoadUserPrivateKey(address string, kt keys.Type) ([]byte, 
 	return priv, keys.Fingerprint(keyID), err
 }
 
+// LoadUserPublicKey retrieves a user's public key by address and type.
+func (s *SQLiteStore) LoadUserPublicKey(address string, kt keys.Type) ([]byte, keys.Fingerprint, error) {
+	var pub []byte
+	var keyID string
+	err := s.db.QueryRow(
+		`SELECT public_key, key_id FROM user_keys WHERE address = ? AND key_type = ? AND revoked_at IS NULL`,
+		address, string(kt)).Scan(&pub, &keyID)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	return pub, keys.Fingerprint(keyID), err
+}
+
 // HasDomainKeys reports whether signing and encryption keys exist for domain.
 func (s *SQLiteStore) HasDomainKeys(domain string) (bool, error) {
 	var count int
