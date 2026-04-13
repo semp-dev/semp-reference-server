@@ -16,23 +16,27 @@ listen_addr = ":8443"
 [database]
 path = "semp.db"
 
-# Provisioned user accounts. Keys are generated on first run.
+# Provisioned user accounts. Users register their public keys via
+# POST /v1/register with their address and password.
 [[users]]
-address = "alice@example.com"
+address  = "alice@example.com"
+password = "changeme"
 
 [[users]]
-address = "bob@example.com"
+address  = "bob@example.com"
+password = "changeme"
 
 # Federation settings for cross-domain delivery.
 [federation]
 session_ttl = 3600   # Federation session lifetime in seconds.
 retention   = "7d"   # Message retention declaration to peers.
 
-# Static federation peer. Omit endpoint to use DNS/well-known discovery.
+# Federation peers. Only domain is required — endpoint and signing key
+# are resolved automatically via DNS SRV and well-known endpoints.
 # [[federation.peers]]
-# domain             = "other.example"
-# endpoint           = "wss://other.example/v1/federate"
-# domain_signing_key = "base64-encoded-ed25519-public-key"
+# domain = "other.example"
+# endpoint = "wss://other.example/v1/federate"       # optional
+# domain_signing_key = "base64-encoded-ed25519-key"   # optional
 
 # Operator policy for client sessions.
 [policy]

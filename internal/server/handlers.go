@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	semp "semp.dev/semp-go"
+	"semp.dev/semp-go/delivery/inboxd"
 	"semp.dev/semp-go/discovery"
 	"semp.dev/semp-go/handshake"
-	"semp.dev/semp-go/delivery/inboxd"
+	"semp.dev/semp-go/keys"
 	"semp.dev/semp-go/transport"
 )
 
@@ -118,6 +118,129 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 	s.logger.Info("federation peer disconnected", "peer", conn.Peer())
 }
 
+// handleRegister handles POST /v1/register — client key registration.
+// The client generates keys locally and pushes its public keys here.
+// The server returns its domain signing and encryption keys.
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req registerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Verify address is a known user and password matches.
+	expectedPassword, ok := s.users[req.Address]
+	if !ok {
+		s.logger.Warn("registration rejected: unknown user", "address", req.Address)
+		http.Error(w, "unknown user", http.StatusForbidden)
+		return
+	}
+	if req.Password != expectedPassword {
+		s.logger.Warn("registration rejected: wrong password", "address", req.Address)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Decode and store identity public key.
+	idPub, err := base64.StdEncoding.DecodeString(req.IdentityKey.PublicKey)
+	if err != nil {
+		http.Error(w, "invalid identity key", http.StatusBadRequest)
+		return
+	}
+	idFP := keys.Compute(idPub)
+	if err := s.store.PutRecord(r.Context(), &keys.Record{
+		Address:   req.Address,
+		Type:      keys.TypeIdentity,
+		Algorithm: req.IdentityKey.Algorithm,
+		PublicKey: req.IdentityKey.PublicKey,
+		KeyID:     idFP,
+	}); err != nil {
+		s.logger.Error("store identity key failed", "address", req.Address, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Decode and store encryption public key.
+	encPub, err := base64.StdEncoding.DecodeString(req.EncryptionKey.PublicKey)
+	if err != nil {
+		http.Error(w, "invalid encryption key", http.StatusBadRequest)
+		return
+	}
+	encFP := keys.Compute(encPub)
+	if err := s.store.PutRecord(r.Context(), &keys.Record{
+		Address:   req.Address,
+		Type:      keys.TypeEncryption,
+		Algorithm: req.EncryptionKey.Algorithm,
+		PublicKey: req.EncryptionKey.PublicKey,
+		KeyID:     encFP,
+	}); err != nil {
+		s.logger.Error("store encryption key failed", "address", req.Address, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("user registered",
+		"address", req.Address,
+		"identity_fp", idFP,
+		"encryption_fp", encFP,
+	)
+
+	// Return domain keys so the client can cache them for handshake verification.
+	signRec, _ := s.store.LookupDomainKey(r.Context(), s.domain)
+	encRec := s.store.LookupDomainEncryptionKey(s.domain)
+
+	resp := registerResponse{Status: "registered"}
+	if signRec != nil {
+		resp.DomainSigningKey = &registerKeyEntry{
+			Algorithm: signRec.Algorithm,
+			PublicKey: signRec.PublicKey,
+			KeyID:     string(signRec.KeyID),
+		}
+	}
+	if encRec != nil {
+		resp.DomainEncryptionKey = &registerKeyEntry{
+			Algorithm: encRec.Algorithm,
+			PublicKey: encRec.PublicKey,
+			KeyID:     string(encRec.KeyID),
+		}
+	}
+
+	_ = idPub
+	_ = encPub
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type registerRequest struct {
+	Address       string        `json:"address"`
+	Password      string        `json:"password"`
+	IdentityKey   registerKey   `json:"identity_key"`
+	EncryptionKey registerKey   `json:"encryption_key"`
+}
+
+type registerKey struct {
+	Algorithm string `json:"algorithm"`
+	PublicKey string `json:"public_key"`
+}
+
+type registerResponse struct {
+	Status             string            `json:"status"`
+	DomainSigningKey   *registerKeyEntry `json:"domain_signing_key,omitempty"`
+	DomainEncryptionKey *registerKeyEntry `json:"domain_encryption_key,omitempty"`
+}
+
+type registerKeyEntry struct {
+	Algorithm string `json:"algorithm"`
+	PublicKey string `json:"public_key"`
+	KeyID     string `json:"key_id"`
+}
+
 func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 	scheme := "wss"
 	if s.tlsCert == "" && !s.externalTLS {
@@ -168,37 +291,33 @@ func (s *Server) handleWellKnownKeys(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// handleWellKnownDomainKeys serves the domain's signing and encryption
-// public keys at /.well-known/semp/domain-keys. Federation peers fetch
-// this over HTTPS to bootstrap trust without manual key exchange.
 func (s *Server) handleWellKnownDomainKeys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	signRec, _ := s.store.LookupDomainKey(ctx, s.domain)
 	encRec := s.store.LookupDomainEncryptionKey(s.domain)
 
 	type domainKeysResponse struct {
-		Type          string `json:"type"`
-		Version       string `json:"version"`
-		Domain        string `json:"domain"`
-		SigningKey    *domainKeyEntry `json:"signing_key,omitempty"`
-		EncryptionKey *domainKeyEntry `json:"encryption_key,omitempty"`
+		Type          string            `json:"type"`
+		Version       string            `json:"version"`
+		Domain        string            `json:"domain"`
+		SigningKey    *registerKeyEntry  `json:"signing_key,omitempty"`
+		EncryptionKey *registerKeyEntry  `json:"encryption_key,omitempty"`
 	}
-	type_ := "SEMP_DOMAIN_KEYS"
 
 	resp := domainKeysResponse{
-		Type:    type_,
+		Type:    "SEMP_DOMAIN_KEYS",
 		Version: semp.ProtocolVersion,
 		Domain:  s.domain,
 	}
 	if signRec != nil {
-		resp.SigningKey = &domainKeyEntry{
+		resp.SigningKey = &registerKeyEntry{
 			Algorithm: signRec.Algorithm,
 			PublicKey: signRec.PublicKey,
 			KeyID:     string(signRec.KeyID),
 		}
 	}
 	if encRec != nil {
-		resp.EncryptionKey = &domainKeyEntry{
+		resp.EncryptionKey = &registerKeyEntry{
 			Algorithm: encRec.Algorithm,
 			PublicKey: encRec.PublicKey,
 			KeyID:     string(encRec.KeyID),
@@ -206,53 +325,4 @@ func (s *Server) handleWellKnownDomainKeys(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-type domainKeyEntry struct {
-	Algorithm string `json:"algorithm"`
-	PublicKey string `json:"public_key"`
-	KeyID     string `json:"key_id"`
-}
-
-// fetchPeerDomainSigningKey fetches a peer's domain signing key from
-// their well-known endpoint over HTTPS.
-func fetchPeerDomainSigningKey(peerDomain, peerEndpoint string) ([]byte, error) {
-	// Derive the HTTPS host from the WSS endpoint.
-	host := peerDomain
-	if peerEndpoint != "" {
-		h := peerEndpoint
-		h = strings.TrimPrefix(h, "wss://")
-		h = strings.TrimPrefix(h, "ws://")
-		if idx := strings.Index(h, "/"); idx > 0 {
-			h = h[:idx]
-		}
-		host = h
-	}
-
-	url := "https://" + host + "/.well-known/semp/domain-keys"
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetch domain keys from %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch domain keys from %s: status %d", url, resp.StatusCode)
-	}
-
-	var result struct {
-		SigningKey *struct {
-			PublicKey string `json:"public_key"`
-		} `json:"signing_key"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode domain keys from %s: %w", url, err)
-	}
-	if result.SigningKey == nil {
-		return nil, fmt.Errorf("no signing key in domain keys response from %s", url)
-	}
-	pub, err := base64.StdEncoding.DecodeString(result.SigningKey.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("decode signing key from %s: %w", url, err)
-	}
-	return pub, nil
 }

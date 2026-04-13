@@ -10,9 +10,16 @@ import (
 	"semp.dev/semp-go/keys"
 )
 
+// DomainKeyFetcher is called when LookupDomainKey has a cache miss.
+// It should fetch the domain signing public key from the peer's
+// well-known endpoint over HTTPS. Returns nil if the key cannot be fetched.
+type DomainKeyFetcher func(domain string) []byte
+
 // SQLiteStore implements keys.Store and inboxd.SharedStore backed by SQLite.
 type SQLiteStore struct {
-	db *sql.DB
+	db               *sql.DB
+	domainKeyFetcher DomainKeyFetcher
+	localDomain      string
 }
 
 // NewSQLiteStore wraps an initialised database.
@@ -20,8 +27,42 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 	return &SQLiteStore{db: db}
 }
 
-// LookupDomainKey returns the current signing key for domain.
+// SetDomainKeyFetcher sets the callback for auto-fetching domain keys on cache miss.
+func (s *SQLiteStore) SetDomainKeyFetcher(localDomain string, f DomainKeyFetcher) {
+	s.localDomain = localDomain
+	s.domainKeyFetcher = f
+}
+
+// LookupDomainKey returns the current signing key for domain. If the key is
+// not in the local database and a DomainKeyFetcher is configured, it fetches
+// the key from the peer's well-known endpoint, caches it, and returns it.
 func (s *SQLiteStore) LookupDomainKey(ctx context.Context, domain string) (*keys.Record, error) {
+	rec, err := s.lookupDomainKeyLocal(ctx, domain)
+	if rec != nil || err != nil {
+		return rec, err
+	}
+	// Cache miss — try auto-fetch for remote domains only.
+	if s.domainKeyFetcher == nil || domain == s.localDomain {
+		return nil, nil
+	}
+	pub := s.domainKeyFetcher(domain)
+	if pub == nil {
+		return nil, nil
+	}
+	fp := s.PutDomainKey(domain, pub)
+	now := time.Now().UTC()
+	return &keys.Record{
+		Type:      keys.TypeDomain,
+		Algorithm: "ed25519",
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		KeyID:     fp,
+		Created:   now,
+		Expires:   now.Add(365 * 24 * time.Hour),
+	}, nil
+}
+
+// lookupDomainKeyLocal queries the local database only.
+func (s *SQLiteStore) lookupDomainKeyLocal(ctx context.Context, domain string) (*keys.Record, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT algorithm, public_key, key_id, created_at, expires_at,
 		        revoked_at, revocation_reason, replacement_key_id

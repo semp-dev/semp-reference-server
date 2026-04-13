@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -43,6 +44,7 @@ type Server struct {
 	sqlInbox  *store.SQLiteInbox
 	forwarder *inboxd.Forwarder
 	policy    *Policy
+	users     map[string]string // address → password
 
 	httpSrv *http.Server
 	logger  *slog.Logger
@@ -65,9 +67,16 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("domain keys: %w", err)
 	}
 
-	if err := keygen.EnsureUserKeys(sqlStore, suite, cfg.Users, logger); err != nil {
-		return nil, fmt.Errorf("user keys: %w", err)
-	}
+	// Set up auto-fetch for remote domain signing keys.
+	sqlStore.SetDomainKeyFetcher(cfg.Domain, func(domain string) []byte {
+		pub, err := fetchDomainSigningKeyFromWellKnown(domain)
+		if err != nil {
+			logger.Warn("auto-fetch domain signing key failed", "domain", domain, "err", err)
+			return nil
+		}
+		logger.Info("auto-fetched domain signing key", "domain", domain, "fingerprint", keys.Compute(pub))
+		return pub
+	})
 
 	sqlInbox := store.NewSQLiteInbox(db)
 	if err := sqlInbox.LoadPending(); err != nil {
@@ -75,31 +84,24 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	memInbox := sqlInbox.MemInbox()
 
+	// Register federation peers. Signing keys are fetched lazily
+	// via the store's DomainKeyFetcher when the first handshake needs them.
 	peerRegistry := inboxd.NewPeerRegistry()
 	for _, p := range cfg.Federation.Peers {
-		var pubBytes []byte
+		peerCfg := inboxd.PeerConfig{
+			Domain:   p.Domain,
+			Endpoint: p.Endpoint,
+		}
+		// If a signing key is explicitly configured, pre-cache it.
 		if p.DomainSigningKey != "" {
-			var err error
-			pubBytes, err = base64.StdEncoding.DecodeString(p.DomainSigningKey)
+			pubBytes, err := base64.StdEncoding.DecodeString(p.DomainSigningKey)
 			if err != nil {
 				return nil, fmt.Errorf("decode peer %s signing key: %w", p.Domain, err)
 			}
-		} else {
-			// Fetch the peer's domain signing key from their well-known endpoint.
-			logger.Info("fetching peer domain signing key", "domain", p.Domain)
-			var err error
-			pubBytes, err = fetchPeerDomainSigningKey(p.Domain, p.Endpoint)
-			if err != nil {
-				return nil, fmt.Errorf("fetch peer %s signing key: %w", p.Domain, err)
-			}
-			logger.Info("fetched peer domain signing key", "domain", p.Domain, "fingerprint", keys.Compute(pubBytes))
+			peerCfg.DomainSigningKey = pubBytes
+			sqlStore.PutDomainKey(p.Domain, pubBytes)
 		}
-		peerRegistry.Put(inboxd.PeerConfig{
-			Domain:           p.Domain,
-			Endpoint:         p.Endpoint,
-			DomainSigningKey: pubBytes,
-		})
-		sqlStore.PutDomainKey(p.Domain, pubBytes)
+		peerRegistry.Put(peerCfg)
 		logger.Info("registered federation peer", "domain", p.Domain, "endpoint", p.Endpoint)
 	}
 
@@ -134,6 +136,12 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	policy := NewPolicy(cfg.Policy)
 
+	// Build user auth map.
+	users := make(map[string]string, len(cfg.Users))
+	for _, u := range cfg.Users {
+		users[u.Address] = u.Password
+	}
+
 	s := &Server{
 		domain:         cfg.Domain,
 		listenAddr:     cfg.ListenAddr,
@@ -152,6 +160,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		sqlInbox:       sqlInbox,
 		forwarder:      forwarder,
 		policy:         policy,
+		users:          users,
 		logger:         logger,
 	}
 	return s, nil
@@ -173,6 +182,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.Handle("/v1/federate", ws.NewHandler(wsCfg, func(conn transport.Conn) {
 		go s.handleFederation(s.ctx, conn)
 	}))
+	mux.HandleFunc("/v1/register", s.handleRegister)
 	mux.HandleFunc(discovery.WellKnownPath, s.handleWellKnownConfig)
 	mux.HandleFunc("/.well-known/semp/keys/", s.handleWellKnownKeys)
 	mux.HandleFunc("/.well-known/semp/domain-keys", s.handleWellKnownDomainKeys)
@@ -218,4 +228,30 @@ func (s *Server) Close() error {
 	s.forwarder.Close()
 	_ = s.sqlInbox.Close()
 	return s.store.DB().Close()
+}
+
+// fetchDomainSigningKeyFromWellKnown fetches a domain's signing public key
+// from https://<domain>/.well-known/semp/domain-keys.
+func fetchDomainSigningKeyFromWellKnown(domain string) ([]byte, error) {
+	url := "https://" + domain + "/.well-known/semp/domain-keys"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
+	}
+	var result struct {
+		SigningKey *struct {
+			PublicKey string `json:"public_key"`
+		} `json:"signing_key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", url, err)
+	}
+	if result.SigningKey == nil {
+		return nil, fmt.Errorf("no signing key in response from %s", url)
+	}
+	return base64.StdEncoding.DecodeString(result.SigningKey.PublicKey)
 }
