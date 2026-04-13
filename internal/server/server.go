@@ -77,9 +77,22 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	peerRegistry := inboxd.NewPeerRegistry()
 	for _, p := range cfg.Federation.Peers {
-		pubBytes, err := base64.StdEncoding.DecodeString(p.DomainSigningKey)
-		if err != nil {
-			return nil, fmt.Errorf("decode peer %s signing key: %w", p.Domain, err)
+		var pubBytes []byte
+		if p.DomainSigningKey != "" {
+			var err error
+			pubBytes, err = base64.StdEncoding.DecodeString(p.DomainSigningKey)
+			if err != nil {
+				return nil, fmt.Errorf("decode peer %s signing key: %w", p.Domain, err)
+			}
+		} else {
+			// Fetch the peer's domain signing key from their well-known endpoint.
+			logger.Info("fetching peer domain signing key", "domain", p.Domain)
+			var err error
+			pubBytes, err = fetchPeerDomainSigningKey(p.Domain, p.Endpoint)
+			if err != nil {
+				return nil, fmt.Errorf("fetch peer %s signing key: %w", p.Domain, err)
+			}
+			logger.Info("fetched peer domain signing key", "domain", p.Domain, "fingerprint", keys.Compute(pubBytes))
 		}
 		peerRegistry.Put(inboxd.PeerConfig{
 			Domain:           p.Domain,
@@ -162,6 +175,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}))
 	mux.HandleFunc(discovery.WellKnownPath, s.handleWellKnownConfig)
 	mux.HandleFunc("/.well-known/semp/keys/", s.handleWellKnownKeys)
+	mux.HandleFunc("/.well-known/semp/domain-keys", s.handleWellKnownDomainKeys)
 
 	s.httpSrv = &http.Server{
 		Addr:    s.listenAddr,

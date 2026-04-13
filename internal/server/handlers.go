@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -164,4 +166,93 @@ func (s *Server) handleWellKnownKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleWellKnownDomainKeys serves the domain's signing and encryption
+// public keys at /.well-known/semp/domain-keys. Federation peers fetch
+// this over HTTPS to bootstrap trust without manual key exchange.
+func (s *Server) handleWellKnownDomainKeys(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	signRec, _ := s.store.LookupDomainKey(ctx, s.domain)
+	encRec := s.store.LookupDomainEncryptionKey(s.domain)
+
+	type domainKeysResponse struct {
+		Type          string `json:"type"`
+		Version       string `json:"version"`
+		Domain        string `json:"domain"`
+		SigningKey    *domainKeyEntry `json:"signing_key,omitempty"`
+		EncryptionKey *domainKeyEntry `json:"encryption_key,omitempty"`
+	}
+	type_ := "SEMP_DOMAIN_KEYS"
+
+	resp := domainKeysResponse{
+		Type:    type_,
+		Version: semp.ProtocolVersion,
+		Domain:  s.domain,
+	}
+	if signRec != nil {
+		resp.SigningKey = &domainKeyEntry{
+			Algorithm: signRec.Algorithm,
+			PublicKey: signRec.PublicKey,
+			KeyID:     string(signRec.KeyID),
+		}
+	}
+	if encRec != nil {
+		resp.EncryptionKey = &domainKeyEntry{
+			Algorithm: encRec.Algorithm,
+			PublicKey: encRec.PublicKey,
+			KeyID:     string(encRec.KeyID),
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type domainKeyEntry struct {
+	Algorithm string `json:"algorithm"`
+	PublicKey string `json:"public_key"`
+	KeyID     string `json:"key_id"`
+}
+
+// fetchPeerDomainSigningKey fetches a peer's domain signing key from
+// their well-known endpoint over HTTPS.
+func fetchPeerDomainSigningKey(peerDomain, peerEndpoint string) ([]byte, error) {
+	// Derive the HTTPS host from the WSS endpoint.
+	host := peerDomain
+	if peerEndpoint != "" {
+		h := peerEndpoint
+		h = strings.TrimPrefix(h, "wss://")
+		h = strings.TrimPrefix(h, "ws://")
+		if idx := strings.Index(h, "/"); idx > 0 {
+			h = h[:idx]
+		}
+		host = h
+	}
+
+	url := "https://" + host + "/.well-known/semp/domain-keys"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch domain keys from %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch domain keys from %s: status %d", url, resp.StatusCode)
+	}
+
+	var result struct {
+		SigningKey *struct {
+			PublicKey string `json:"public_key"`
+		} `json:"signing_key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode domain keys from %s: %w", url, err)
+	}
+	if result.SigningKey == nil {
+		return nil, fmt.Errorf("no signing key in domain keys response from %s", url)
+	}
+	pub, err := base64.StdEncoding.DecodeString(result.SigningKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("decode signing key from %s: %w", url, err)
+	}
+	return pub, nil
 }
