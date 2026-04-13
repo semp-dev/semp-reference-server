@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"semp.dev/semp-go/keys"
 	"semp.dev/semp-go/transport"
 	"semp.dev/semp-go/transport/h2"
+	"semp.dev/semp-go/transport/quic"
 	"semp.dev/semp-go/transport/ws"
 	"semp.dev/semp-reference-server/internal/config"
 	"semp.dev/semp-reference-server/internal/keygen"
@@ -31,6 +33,7 @@ type Server struct {
 	tlsCert        string
 	tlsKey         string
 	externalTLS    bool
+	quicAddr       string
 	fedSessionTTL  int
 	fedRetention   string
 
@@ -44,9 +47,11 @@ type Server struct {
 	inbox     *delivery.Inbox
 	sqlInbox  *store.SQLiteInbox
 	forwarder *inboxd.Forwarder
+	blockList *store.SQLiteBlockList
 	policy    *Policy
 	users     map[string]string // address → password
 
+	metrics *Metrics
 	httpSrv *http.Server
 	logger  *slog.Logger
 	ctx     context.Context
@@ -59,6 +64,10 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 	sqlStore := store.NewSQLiteStore(db)
+	if cfg.Database.MasterKey != "" {
+		sqlStore.SetMasterKey(cfg.Database.MasterKey)
+		logger.Info("private key encryption enabled")
+	}
 
 	suite := crypto.LookupSuite(crypto.SuiteID(cfg.Crypto.Suite))
 	if suite == nil {
@@ -152,7 +161,10 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		},
 	})
 
-	policy := NewPolicy(cfg.Policy)
+	blockList := store.NewSQLiteBlockList(db)
+
+	metrics := newMetrics()
+	policy := NewPolicy(cfg.Policy, metrics)
 
 	// Build user auth map.
 	users := make(map[string]string, len(cfg.Users))
@@ -166,6 +178,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		tlsCert:        cfg.TLS.CertFile,
 		tlsKey:         cfg.TLS.KeyFile,
 		externalTLS:    cfg.TLS.ExternalTLS,
+		quicAddr:       cfg.TLS.QUICAddr,
 		fedSessionTTL:  cfg.Federation.SessionTTL,
 		fedRetention:   cfg.Federation.Retention,
 		suite:          suite,
@@ -177,8 +190,10 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		inbox:          memInbox,
 		sqlInbox:       sqlInbox,
 		forwarder:      forwarder,
+		blockList:      blockList,
 		policy:         policy,
 		users:          users,
+		metrics:        metrics,
 		logger:         logger,
 	}
 	return s, nil
@@ -215,9 +230,13 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.handleFederation(s.ctx, conn)
 	}))
 	mux.HandleFunc("/v1/register", s.handleRegister)
+	mux.HandleFunc("/v1/device/register", s.handleDeviceRegister)
 	mux.HandleFunc(discovery.WellKnownPath, s.handleWellKnownConfig)
 	mux.HandleFunc("/.well-known/semp/keys/", s.handleWellKnownKeys)
 	mux.HandleFunc("/.well-known/semp/domain-keys", s.handleWellKnownDomainKeys)
+	mux.HandleFunc("/v1/blocklist", s.handleBlockList)
+	mux.HandleFunc("/v1/blocklist/", s.handleBlockList)
+	mux.Handle("/debug/metrics", s.metrics.handler())
 
 	s.httpSrv = &http.Server{
 		Addr:    s.listenAddr,
@@ -225,6 +244,31 @@ func (s *Server) Run(ctx context.Context) error {
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
+	}
+
+	// Start QUIC listener if configured.
+	if s.quicAddr != "" && s.tlsCert != "" && s.tlsKey != "" {
+		tlsCfg, err := loadTLSConfig(s.tlsCert, s.tlsKey)
+		if err != nil {
+			return fmt.Errorf("quic tls: %w", err)
+		}
+		quicTransport := quic.NewWithConfig(quic.Config{
+			TLSConfig: tlsCfg,
+		})
+		quicListener, err := quicTransport.Listen(ctx, s.quicAddr)
+		if err != nil {
+			return fmt.Errorf("quic listen: %w", err)
+		}
+		s.logger.Info("starting QUIC server", "addr", s.quicAddr)
+		go func() {
+			for {
+				conn, err := quicListener.Accept(ctx)
+				if err != nil {
+					return
+				}
+				go s.handleClient(ctx, conn)
+			}
+		}()
 	}
 
 	errCh := make(chan error, 1)
@@ -260,6 +304,18 @@ func (s *Server) Close() error {
 	s.forwarder.Close()
 	_ = s.sqlInbox.Close()
 	return s.store.DB().Close()
+}
+
+func loadTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{"h3"},
+	}, nil
 }
 
 // fetchDomainSigningKeyFromWellKnown fetches a domain's signing public key.

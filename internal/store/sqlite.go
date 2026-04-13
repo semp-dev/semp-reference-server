@@ -20,11 +20,34 @@ type SQLiteStore struct {
 	db               *sql.DB
 	domainKeyFetcher DomainKeyFetcher
 	localDomain      string
+	masterKey        string // if set, private keys are encrypted at rest
 }
 
 // NewSQLiteStore wraps an initialised database.
 func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 	return &SQLiteStore{db: db}
+}
+
+// SetMasterKey enables encrypted-at-rest private key storage using
+// AES-256-GCM with Argon2id key derivation.
+func (s *SQLiteStore) SetMasterKey(key string) {
+	s.masterKey = key
+}
+
+// encryptIfNeeded encrypts private key bytes if a master key is configured.
+func (s *SQLiteStore) encryptIfNeeded(priv []byte) (ciphertext, salt, nonce []byte, err error) {
+	if s.masterKey == "" || priv == nil {
+		return priv, nil, nil, nil
+	}
+	return EncryptPrivateKey(s.masterKey, priv)
+}
+
+// decryptIfNeeded decrypts private key bytes if salt and nonce are present.
+func (s *SQLiteStore) decryptIfNeeded(data, salt, nonce []byte) ([]byte, error) {
+	if salt == nil || nonce == nil || s.masterKey == "" {
+		return data, nil // unencrypted (legacy or no master key)
+	}
+	return DecryptPrivateKey(s.masterKey, data, salt, nonce)
 }
 
 // SetDomainKeyFetcher sets the callback for auto-fetching domain keys on cache miss.
@@ -289,55 +312,77 @@ func (s *SQLiteStore) PutDomainKey(domain string, pub []byte) keys.Fingerprint {
 // --- Server-specific helpers ---
 
 // PutDomainKeyPair stores a domain key with its private key.
+// If a master key is configured, the private key is encrypted at rest.
 func (s *SQLiteStore) PutDomainKeyPair(domain, keyType, algorithm string, pub, priv []byte) keys.Fingerprint {
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(2 * 365 * 24 * time.Hour).Format(time.RFC3339)
+	ct, salt, nonce, _ := s.encryptIfNeeded(priv)
 	_, _ = s.db.Exec(
 		`INSERT OR REPLACE INTO domain_keys
-		 (domain, key_type, algorithm, public_key, private_key, key_id, created_at, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		domain, keyType, algorithm, pub, priv, string(fp), now, expires)
+		 (domain, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		domain, keyType, algorithm, pub, ct, salt, nonce, string(fp), now, expires)
 	return fp
 }
 
 // LoadDomainPrivateKey retrieves the private key for a domain key type.
+// Decrypts automatically if the key was stored encrypted.
 func (s *SQLiteStore) LoadDomainPrivateKey(domain, keyType string) ([]byte, keys.Fingerprint, error) {
 	var priv []byte
 	var keyID string
+	var salt, nonce []byte
 	err := s.db.QueryRow(
-		`SELECT private_key, key_id FROM domain_keys WHERE domain = ? AND key_type = ?`,
-		domain, keyType).Scan(&priv, &keyID)
+		`SELECT private_key, key_salt, key_nonce, key_id FROM domain_keys WHERE domain = ? AND key_type = ?`,
+		domain, keyType).Scan(&priv, &salt, &nonce, &keyID)
 	if err == sql.ErrNoRows {
 		return nil, "", nil
 	}
-	return priv, keys.Fingerprint(keyID), err
+	if err != nil {
+		return nil, "", err
+	}
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce)
+	if err != nil {
+		return nil, "", err
+	}
+	return plaintext, keys.Fingerprint(keyID), nil
 }
 
 // PutUserKeyPair stores a user key with its private key.
+// If a master key is configured, the private key is encrypted at rest.
 func (s *SQLiteStore) PutUserKeyPair(address string, kt keys.Type, algorithm string, pub, priv []byte) keys.Fingerprint {
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	ct, salt, nonce, _ := s.encryptIfNeeded(priv)
 	_, _ = s.db.Exec(
 		`INSERT OR REPLACE INTO user_keys
-		 (address, key_type, algorithm, public_key, private_key, key_id, created_at, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		address, string(kt), algorithm, pub, priv, string(fp), now, expires)
+		 (address, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		address, string(kt), algorithm, pub, ct, salt, nonce, string(fp), now, expires)
 	return fp
 }
 
 // LoadUserPrivateKey retrieves a user's private key by address and type.
+// Decrypts automatically if the key was stored encrypted.
 func (s *SQLiteStore) LoadUserPrivateKey(address string, kt keys.Type) ([]byte, keys.Fingerprint, error) {
 	var priv []byte
 	var keyID string
+	var salt, nonce []byte
 	err := s.db.QueryRow(
-		`SELECT private_key, key_id FROM user_keys WHERE address = ? AND key_type = ? AND revoked_at IS NULL`,
-		address, string(kt)).Scan(&priv, &keyID)
+		`SELECT private_key, key_salt, key_nonce, key_id FROM user_keys WHERE address = ? AND key_type = ? AND revoked_at IS NULL`,
+		address, string(kt)).Scan(&priv, &salt, &nonce, &keyID)
 	if err == sql.ErrNoRows {
 		return nil, "", nil
 	}
-	return priv, keys.Fingerprint(keyID), err
+	if err != nil {
+		return nil, "", err
+	}
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce)
+	if err != nil {
+		return nil, "", err
+	}
+	return plaintext, keys.Fingerprint(keyID), nil
 }
 
 // LoadUserPublicKey retrieves a user's public key by address and type.

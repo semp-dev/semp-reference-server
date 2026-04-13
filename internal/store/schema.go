@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS domain_keys (
     algorithm   TEXT NOT NULL,
     public_key  BLOB NOT NULL,
     private_key BLOB,
+    key_salt    BLOB,
+    key_nonce   BLOB,
     key_id      TEXT NOT NULL,
     created_at  TEXT NOT NULL,
     expires_at  TEXT NOT NULL,
@@ -29,6 +31,8 @@ CREATE TABLE IF NOT EXISTS user_keys (
     algorithm   TEXT NOT NULL,
     public_key  BLOB NOT NULL,
     private_key BLOB,
+    key_salt    BLOB,
+    key_nonce   BLOB,
     key_id      TEXT NOT NULL,
     created_at  TEXT NOT NULL,
     expires_at  TEXT NOT NULL,
@@ -48,6 +52,19 @@ CREATE TABLE IF NOT EXISTS device_certificates (
     expires_at          TEXT,
     signature_json      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS block_entries (
+    id           TEXT NOT NULL PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    entity_type  TEXT NOT NULL,
+    entity_value TEXT NOT NULL,
+    acknowledgment TEXT NOT NULL DEFAULT 'rejected',
+    reason       TEXT,
+    scope        TEXT NOT NULL DEFAULT 'all',
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_block_user ON block_entries(user_id);
 
 CREATE TABLE IF NOT EXISTS inbox (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
