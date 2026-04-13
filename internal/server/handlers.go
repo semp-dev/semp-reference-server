@@ -118,7 +118,7 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 
 func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 	scheme := "wss"
-	if s.tlsCert == "" {
+	if s.tlsCert == "" && !s.externalTLS {
 		scheme = "ws"
 	}
 	cfg := discovery.Configuration{

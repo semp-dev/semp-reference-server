@@ -28,6 +28,7 @@ type Server struct {
 	listenAddr     string
 	tlsCert        string
 	tlsKey         string
+	externalTLS    bool
 	fedSessionTTL  int
 	fedRetention   string
 
@@ -125,6 +126,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		listenAddr:     cfg.ListenAddr,
 		tlsCert:        cfg.TLS.CertFile,
 		tlsKey:         cfg.TLS.KeyFile,
+		externalTLS:    cfg.TLS.ExternalTLS,
 		fedSessionTTL:  cfg.Federation.SessionTTL,
 		fedRetention:   cfg.Federation.Retention,
 		suite:          suite,

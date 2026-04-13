@@ -23,6 +23,11 @@ type Config struct {
 type TLSConfig struct {
 	CertFile string `toml:"cert_file"`
 	KeyFile  string `toml:"key_file"`
+
+	// ExternalTLS indicates TLS is terminated by a reverse proxy (e.g.
+	// Cloudflare, Traefik, Caddy). The server runs plain HTTP but
+	// advertises wss:// and https:// in discovery responses.
+	ExternalTLS bool `toml:"external_tls"`
 }
 
 // DatabaseConfig specifies the SQLite database location.
