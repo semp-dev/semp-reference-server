@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	golang.org/x/crypto v0.50.0
 	modernc.org/sqlite v1.48.2
-	semp.dev/semp-go v0.2.4
+	semp.dev/semp-go v0.2.5
 )
 
 require (

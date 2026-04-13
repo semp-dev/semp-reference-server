@@ -268,6 +268,7 @@ func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 		fedEndpoints["quic"] = "https://" + host + "/v1/quic/federate"
 	}
 	cfg := discovery.Configuration{
+		Type:    "SEMP_CONFIGURATION",
 		Version: semp.ProtocolVersion,
 		Domain:  s.domain,
 		Endpoints: discovery.ConfigEndpoints{
