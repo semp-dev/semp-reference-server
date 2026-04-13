@@ -230,10 +230,21 @@ func (s *Server) Close() error {
 	return s.store.DB().Close()
 }
 
-// fetchDomainSigningKeyFromWellKnown fetches a domain's signing public key
-// from https://<domain>/.well-known/semp/domain-keys.
+// fetchDomainSigningKeyFromWellKnown fetches a domain's signing public key.
+// It first resolves the SRV target for _semp._tcp.<domain> and fetches from
+// that hostname. If SRV lookup fails, it falls back to the bare domain.
 func fetchDomainSigningKeyFromWellKnown(domain string) ([]byte, error) {
-	url := "https://" + domain + "/.well-known/semp/domain-keys"
+	host := domain
+	// Try DNS SRV to find the actual server hostname.
+	_, addrs, err := net.DefaultResolver.LookupSRV(context.Background(), "semp", "tcp", domain)
+	if err == nil && len(addrs) > 0 {
+		target := strings.TrimSuffix(addrs[0].Target, ".")
+		if target != "" {
+			host = target
+		}
+	}
+
+	url := "https://" + host + "/.well-known/semp/domain-keys"
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", url, err)
