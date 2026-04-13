@@ -72,15 +72,16 @@ func main() {
 
 // ExportedKeys is the JSON format for key export/import between server and client.
 type ExportedKeys struct {
-	Address        string `json:"address"`
-	Domain         string `json:"domain"`
-	IdentityPub    string `json:"identity_public_key"`
-	IdentityPriv   string `json:"identity_private_key"`
-	IdentityFP     string `json:"identity_fingerprint"`
-	EncryptionPub  string `json:"encryption_public_key"`
-	EncryptionPriv string `json:"encryption_private_key"`
-	EncryptionFP   string `json:"encryption_fingerprint"`
-	Algorithm      string `json:"algorithm"`
+	Address          string `json:"address"`
+	Domain           string `json:"domain"`
+	DomainSigningKey string `json:"domain_signing_key"`
+	IdentityPub      string `json:"identity_public_key"`
+	IdentityPriv     string `json:"identity_private_key"`
+	IdentityFP       string `json:"identity_fingerprint"`
+	EncryptionPub    string `json:"encryption_public_key"`
+	EncryptionPriv   string `json:"encryption_private_key"`
+	EncryptionFP     string `json:"encryption_fingerprint"`
+	Algorithm        string `json:"algorithm"`
 }
 
 func exportKeys() {
@@ -120,9 +121,12 @@ func exportKeys() {
 		os.Exit(1)
 	}
 
-	idPriv, idFP, err := sqlStore.LoadDomainPrivateKey(*address, "")
-	_ = idPriv
-	_ = idFP
+	// Load domain signing public key
+	domainSignPub, _, err := sqlStore.LoadDomainPublicKey(cfg.Domain, "signing")
+	if err != nil || domainSignPub == nil {
+		fmt.Fprintf(os.Stderr, "error: no domain signing key found for %s\n", cfg.Domain)
+		os.Exit(1)
+	}
 
 	// Load identity key
 	identityPriv, identityFP, err := sqlStore.LoadUserPrivateKey(*address, keys.TypeIdentity)
@@ -151,9 +155,10 @@ func exportKeys() {
 	_ = encPubFP
 
 	exported := ExportedKeys{
-		Address:        *address,
-		Domain:         cfg.Domain,
-		IdentityPub:    base64.StdEncoding.EncodeToString(identityPubBytes),
+		Address:          *address,
+		Domain:           cfg.Domain,
+		DomainSigningKey: base64.StdEncoding.EncodeToString(domainSignPub),
+		IdentityPub:      base64.StdEncoding.EncodeToString(identityPubBytes),
 		IdentityPriv:   base64.StdEncoding.EncodeToString(identityPriv),
 		IdentityFP:     string(identityFP),
 		EncryptionPub:  base64.StdEncoding.EncodeToString(encPubBytes),
