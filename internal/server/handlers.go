@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	semp "semp.dev/semp-go"
+	"semp.dev/semp-go/delivery"
 	"semp.dev/semp-go/delivery/inboxd"
 	"semp.dev/semp-go/discovery"
 	"semp.dev/semp-go/handshake"
@@ -32,9 +33,11 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 
 	sess, err := handshake.RunServer(ctx, conn, srv)
 	if err != nil {
+		s.metrics.HandshakesFailure.Add(1)
 		s.logger.Error("client handshake failed", "peer", conn.Peer(), "err", err)
 		return
 	}
+	s.metrics.HandshakesSuccess.Add(1)
 	s.logger.Info("client session established",
 		"peer", conn.Peer(),
 		"session", sess.ID,
@@ -48,6 +51,7 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 		Store:          s.store,
 		Inbox:          s.inbox,
 		Forwarder:      s.forwarder,
+		BlockList:      s.blockList,
 		LocalDomain:    s.domain,
 		DomainSignFP:   s.domainSignFP,
 		DomainSignPriv: s.domainSignPriv,
@@ -102,6 +106,7 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 		Suite:          s.suite,
 		Store:          s.store,
 		Inbox:          s.inbox,
+		BlockList:      s.blockList,
 		LocalDomain:    s.domain,
 		DomainSignFP:   s.domainSignFP,
 		DomainSignPriv: s.domainSignPriv,
@@ -184,6 +189,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.metrics.Registrations.Add(1)
 	s.logger.Info("user registered",
 		"address", req.Address,
 		"identity_fp", idFP,
@@ -248,12 +254,16 @@ func (s *Server) handleWellKnownConfig(w http.ResponseWriter, r *http.Request) {
 		wsScheme = "ws"
 		h2Scheme = "http"
 	}
+	endpoints := map[string]string{
+		"h2": h2Scheme + "://" + r.Host + "/v1/h2",
+		"ws": wsScheme + "://" + r.Host + "/v1/ws",
+	}
+	if s.quicAddr != "" {
+		endpoints["quic"] = "https://" + r.Host + "/v1/quic"
+	}
 	cfg := discovery.Configuration{
-		Version: semp.ProtocolVersion,
-		Endpoints: map[string]string{
-			"h2": h2Scheme + "://" + r.Host + "/v1/h2",
-			"ws": wsScheme + "://" + r.Host + "/v1/ws",
-		},
+		Version:   semp.ProtocolVersion,
+		Endpoints: endpoints,
 		Features:        []string{},
 		PostQuantum:     "hybrid",
 		MaxEnvelopeSize: 25 * 1024 * 1024,
@@ -328,4 +338,184 @@ func (s *Server) handleWellKnownDomainKeys(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleBlockList handles GET/POST/DELETE /v1/blocklist for per-user block lists.
+func (s *Server) handleBlockList(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		address := r.URL.Query().Get("address")
+		if address == "" {
+			http.Error(w, "missing address parameter", http.StatusBadRequest)
+			return
+		}
+		entries, err := s.blockList.ListEntries(r.Context(), address)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(entries)
+
+	case http.MethodPost:
+		var req struct {
+			UserID         string `json:"user_id"`
+			EntityType     string `json:"entity_type"`
+			EntityValue    string `json:"entity_value"`
+			Acknowledgment string `json:"acknowledgment"`
+			Reason         string `json:"reason"`
+			Scope          string `json:"scope"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.UserID == "" || req.EntityType == "" || req.EntityValue == "" {
+			http.Error(w, "user_id, entity_type, and entity_value are required", http.StatusBadRequest)
+			return
+		}
+		ack := semp.Acknowledgment(req.Acknowledgment)
+		if ack == "" {
+			ack = semp.AckRejected
+		}
+		scope := delivery.Scope(req.Scope)
+		if scope == "" {
+			scope = delivery.ScopeAll
+		}
+		entity := delivery.Entity{Type: delivery.EntityType(req.EntityType)}
+		switch entity.Type {
+		case delivery.EntityUser:
+			entity.Address = req.EntityValue
+		case delivery.EntityDomain:
+			entity.Domain = req.EntityValue
+		case delivery.EntityServer:
+			entity.Hostname = req.EntityValue
+		}
+		entry := delivery.BlockEntry{
+			Entity: entity,
+			Acknowledgment: ack,
+			Reason:         req.Reason,
+			Scope:          scope,
+		}
+		id, err := s.blockList.AddEntry(r.Context(), req.UserID, entry)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("block entry added", "user", req.UserID, "entity", req.EntityValue, "id", id)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "status": "added"})
+
+	case http.MethodDelete:
+		id := strings.TrimPrefix(r.URL.Path, "/v1/blocklist/")
+		if id == "" || id == r.URL.Path {
+			http.Error(w, "missing entry ID", http.StatusBadRequest)
+			return
+		}
+		if err := s.blockList.RemoveEntry(r.Context(), id); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("block entry removed", "id", id)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "removed"})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleDeviceRegister handles POST /v1/device/register for delegated
+// device registration. The primary device issues a scoped certificate
+// and the delegated device submits it along with its public keys.
+func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Certificate      keys.DeviceCertificate `json:"certificate"`
+		DeviceIdentityKey   registerKey          `json:"device_identity_key"`
+		DeviceEncryptionKey registerKey          `json:"device_encryption_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	cert := &req.Certificate
+	if cert.UserID == "" || cert.DeviceKeyID == "" {
+		http.Error(w, "certificate must include user_id and device_key_id", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the user exists on this server.
+	if _, ok := s.users[cert.UserID]; !ok {
+		http.Error(w, "unknown user", http.StatusForbidden)
+		return
+	}
+
+	// Verify the certificate signature chain.
+	if err := cert.VerifyChain(r.Context(), s.suite, s.store); err != nil {
+		s.logger.Warn("device certificate verification failed", "user", cert.UserID, "device", cert.DeviceID, "err", err)
+		http.Error(w, "certificate verification failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Store the certificate.
+	if err := s.store.PutDeviceCertificate(r.Context(), cert); err != nil {
+		s.logger.Error("store device certificate failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Store the device's public keys.
+	idPub, err := base64.StdEncoding.DecodeString(req.DeviceIdentityKey.PublicKey)
+	if err != nil {
+		http.Error(w, "invalid device identity key", http.StatusBadRequest)
+		return
+	}
+	encPub, err := base64.StdEncoding.DecodeString(req.DeviceEncryptionKey.PublicKey)
+	if err != nil {
+		http.Error(w, "invalid device encryption key", http.StatusBadRequest)
+		return
+	}
+
+	idFP := keys.Compute(idPub)
+	if err := s.store.PutRecord(r.Context(), &keys.Record{
+		Address:   cert.UserID,
+		Type:      keys.TypeDevice,
+		Algorithm: req.DeviceIdentityKey.Algorithm,
+		PublicKey: req.DeviceIdentityKey.PublicKey,
+		KeyID:     idFP,
+	}); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	encFP := keys.Compute(encPub)
+	if err := s.store.PutRecord(r.Context(), &keys.Record{
+		Address:   cert.UserID,
+		Type:      keys.TypeEncryption,
+		Algorithm: req.DeviceEncryptionKey.Algorithm,
+		PublicKey: req.DeviceEncryptionKey.PublicKey,
+		KeyID:     encFP,
+	}); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("device registered",
+		"user", cert.UserID,
+		"device", cert.DeviceID,
+		"device_key", cert.DeviceKeyID,
+		"scope_send", cert.Scope.Send.Mode,
+	)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":    "registered",
+		"device_id": cert.DeviceID,
+	})
 }

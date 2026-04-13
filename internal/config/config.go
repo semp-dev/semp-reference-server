@@ -34,11 +34,16 @@ type TLSConfig struct {
 	// Cloudflare, Traefik, Caddy). The server runs plain HTTP but
 	// advertises wss:// and https:// in discovery responses.
 	ExternalTLS bool `toml:"external_tls"`
+
+	// QUICAddr is the optional UDP listen address for QUIC/HTTP3.
+	// QUIC requires TLS certificates. Omit to disable QUIC.
+	QUICAddr string `toml:"quic_addr"`
 }
 
 // DatabaseConfig specifies the SQLite database location.
 type DatabaseConfig struct {
-	Path string `toml:"path"`
+	Path      string `toml:"path"`
+	MasterKey string `toml:"master_key"`
 }
 
 // UserConfig defines a provisioned user account.
@@ -66,6 +71,14 @@ type PolicyConfig struct {
 	SessionTTL     int      `toml:"session_ttl"`
 	BlockedDomains []string `toml:"blocked_domains"`
 	Permissions    []string `toml:"permissions"`
+	PoW            PoWConfig `toml:"pow"`
+}
+
+// PoWConfig controls proof-of-work challenge gating on handshakes.
+type PoWConfig struct {
+	Enabled    bool `toml:"enabled"`
+	Difficulty int  `toml:"difficulty"`
+	TTL        int  `toml:"ttl"`
 }
 
 // LoggingConfig controls log output.

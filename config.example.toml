@@ -11,6 +11,7 @@ listen_addr = ":8443"
 [tls]
 # cert_file = "/etc/semp/cert.pem"
 # key_file  = "/etc/semp/key.pem"
+# quic_addr = ":8443"   # UDP listen address for QUIC/HTTP3 (requires cert/key)
 
 # Cryptographic algorithm suite.
 # "pq-kyber768-x25519" (post-quantum hybrid, recommended)
@@ -21,6 +22,7 @@ suite = "pq-kyber768-x25519"
 # SQLite database path. Created automatically on first run.
 [database]
 path = "semp.db"
+# master_key = "your-secret-master-key"   # Encrypts private keys at rest (AES-256-GCM + Argon2id)
 
 # Provisioned user accounts. Users register their public keys via
 # POST /v1/register with their address and password.
@@ -49,6 +51,13 @@ retention   = "7d"   # Message retention declaration to peers.
 session_ttl     = 300                # Client session TTL in seconds.
 blocked_domains = []                 # Domains to reject at handshake.
 permissions     = ["send", "receive"]
+
+# Proof-of-work challenge gating. Clients must solve a SHA256 PoW
+# challenge before the handshake completes.
+[policy.pow]
+enabled    = false
+difficulty = 20    # Leading zero bits required in the hash.
+ttl        = 300   # Challenge validity in seconds.
 
 # Logging configuration.
 [logging]
