@@ -240,9 +240,17 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/v1/blocklist/", s.handleBlockList)
 	mux.Handle("/debug/metrics", s.metrics.handler())
 
+	var tlsCfgHTTP *tls.Config
+	if s.tlsCert != "" && s.tlsKey != "" {
+		tlsCfgHTTP, _ = loadTLSConfig(s.tlsCert, s.tlsKey, "h2", "http/1.1")
+	}
 	s.httpSrv = &http.Server{
-		Addr:    s.listenAddr,
-		Handler: mux,
+		Addr:              s.listenAddr,
+		Handler:           mux,
+		TLSConfig:         tlsCfgHTTP,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
@@ -250,7 +258,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Start QUIC listener if configured.
 	if s.quicAddr != "" && s.tlsCert != "" && s.tlsKey != "" {
-		tlsCfg, err := loadTLSConfig(s.tlsCert, s.tlsKey)
+		tlsCfg, err := loadTLSConfig(s.tlsCert, s.tlsKey, "h3")
 		if err != nil {
 			return fmt.Errorf("quic tls: %w", err)
 		}
@@ -320,15 +328,15 @@ func (s *Server) Close() error {
 	return s.store.DB().Close()
 }
 
-func loadTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+func loadTLSConfig(certFile, keyFile string, nextProtos ...string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"h3"},
+		MinVersion:   tls.VersionTLS12,
+		NextProtos:   nextProtos,
 	}, nil
 }
 
