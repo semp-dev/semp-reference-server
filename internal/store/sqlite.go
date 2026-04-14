@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"time"
 
 	"semp.dev/semp-go/keys"
@@ -303,11 +304,13 @@ func (s *SQLiteStore) PutDomainKey(domain string, pub []byte) keys.Fingerprint {
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
-	_, _ = s.db.Exec(
+	if _, err := s.db.Exec(
 		`INSERT OR REPLACE INTO domain_keys
 		 (domain, key_type, algorithm, public_key, key_id, created_at, expires_at)
 		 VALUES (?, 'signing', 'ed25519', ?, ?, ?, ?)`,
-		domain, pub, string(fp), now, expires)
+		domain, pub, string(fp), now, expires); err != nil {
+		log.Printf("store: PutDomainKey %s: %v", domain, err)
+	}
 	return fp
 }
 
@@ -319,12 +322,17 @@ func (s *SQLiteStore) PutDomainKeyPair(domain, keyType, algorithm string, pub, p
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(2 * 365 * 24 * time.Hour).Format(time.RFC3339)
-	ct, salt, nonce, _ := s.encryptIfNeeded(priv, string(fp))
-	_, _ = s.db.Exec(
+	ct, salt, nonce, encErr := s.encryptIfNeeded(priv, string(fp))
+	if encErr != nil {
+		log.Printf("store: PutDomainKeyPair encrypt %s/%s: %v", domain, keyType, encErr)
+	}
+	if _, err := s.db.Exec(
 		`INSERT OR REPLACE INTO domain_keys
 		 (domain, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		domain, keyType, algorithm, pub, ct, salt, nonce, string(fp), now, expires)
+		domain, keyType, algorithm, pub, ct, salt, nonce, string(fp), now, expires); err != nil {
+		log.Printf("store: PutDomainKeyPair %s/%s: %v", domain, keyType, err)
+	}
 	return fp
 }
 
@@ -356,12 +364,17 @@ func (s *SQLiteStore) PutUserKeyPair(address string, kt keys.Type, algorithm str
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
-	ct, salt, nonce, _ := s.encryptIfNeeded(priv, string(fp))
-	_, _ = s.db.Exec(
+	ct, salt, nonce, encErr := s.encryptIfNeeded(priv, string(fp))
+	if encErr != nil {
+		log.Printf("store: PutUserKeyPair encrypt %s/%s: %v", address, kt, encErr)
+	}
+	if _, err := s.db.Exec(
 		`INSERT OR REPLACE INTO user_keys
 		 (address, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		address, string(kt), algorithm, pub, ct, salt, nonce, string(fp), now, expires)
+		address, string(kt), algorithm, pub, ct, salt, nonce, string(fp), now, expires); err != nil {
+		log.Printf("store: PutUserKeyPair %s/%s: %v", address, kt, err)
+	}
 	return fp
 }
 
