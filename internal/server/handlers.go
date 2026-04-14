@@ -134,21 +134,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Verify address is a known user and password matches.
+	// Verify credentials. Return identical error for unknown user and wrong
+	// password to prevent user enumeration.
 	expectedPassword, ok := s.users[req.Address]
-	if !ok {
-		s.logger.Warn("registration rejected: unknown user", "address", req.Address)
-		http.Error(w, "unknown user", http.StatusForbidden)
-		return
-	}
-	if req.Password != expectedPassword {
-		s.logger.Warn("registration rejected: wrong password", "address", req.Address)
+	if !ok || req.Password != expectedPassword {
+		s.logger.Warn("registration rejected", "address", req.Address)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -386,6 +383,7 @@ func (s *Server) handleBlockList(w http.ResponseWriter, r *http.Request) {
 			Reason         string `json:"reason"`
 			Scope          string `json:"scope"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
@@ -454,6 +452,7 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var req struct {
 		Certificate      keys.DeviceCertificate `json:"certificate"`
 		DeviceIdentityKey   registerKey          `json:"device_identity_key"`
