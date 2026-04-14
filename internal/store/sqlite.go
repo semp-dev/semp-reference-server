@@ -35,19 +35,21 @@ func (s *SQLiteStore) SetMasterKey(key string) {
 }
 
 // encryptIfNeeded encrypts private key bytes if a master key is configured.
-func (s *SQLiteStore) encryptIfNeeded(priv []byte) (ciphertext, salt, nonce []byte, err error) {
+// keyID is used as AAD to bind the ciphertext to its storage slot.
+func (s *SQLiteStore) encryptIfNeeded(priv []byte, keyID string) (ciphertext, salt, nonce []byte, err error) {
 	if s.masterKey == "" || priv == nil {
 		return priv, nil, nil, nil
 	}
-	return EncryptPrivateKey(s.masterKey, priv)
+	return EncryptPrivateKey(s.masterKey, priv, []byte(keyID))
 }
 
 // decryptIfNeeded decrypts private key bytes if salt and nonce are present.
-func (s *SQLiteStore) decryptIfNeeded(data, salt, nonce []byte) ([]byte, error) {
+// keyID is used as AAD to verify the ciphertext is for the correct key.
+func (s *SQLiteStore) decryptIfNeeded(data, salt, nonce []byte, keyID string) ([]byte, error) {
 	if salt == nil || nonce == nil || s.masterKey == "" {
 		return data, nil // unencrypted (legacy or no master key)
 	}
-	return DecryptPrivateKey(s.masterKey, data, salt, nonce)
+	return DecryptPrivateKey(s.masterKey, data, salt, nonce, []byte(keyID))
 }
 
 // SetDomainKeyFetcher sets the callback for auto-fetching domain keys on cache miss.
@@ -317,7 +319,7 @@ func (s *SQLiteStore) PutDomainKeyPair(domain, keyType, algorithm string, pub, p
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(2 * 365 * 24 * time.Hour).Format(time.RFC3339)
-	ct, salt, nonce, _ := s.encryptIfNeeded(priv)
+	ct, salt, nonce, _ := s.encryptIfNeeded(priv, string(fp))
 	_, _ = s.db.Exec(
 		`INSERT OR REPLACE INTO domain_keys
 		 (domain, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
@@ -341,7 +343,7 @@ func (s *SQLiteStore) LoadDomainPrivateKey(domain, keyType string) ([]byte, keys
 	if err != nil {
 		return nil, "", err
 	}
-	plaintext, err := s.decryptIfNeeded(priv, salt, nonce)
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce, keyID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -354,7 +356,7 @@ func (s *SQLiteStore) PutUserKeyPair(address string, kt keys.Type, algorithm str
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)
 	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
-	ct, salt, nonce, _ := s.encryptIfNeeded(priv)
+	ct, salt, nonce, _ := s.encryptIfNeeded(priv, string(fp))
 	_, _ = s.db.Exec(
 		`INSERT OR REPLACE INTO user_keys
 		 (address, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
@@ -378,7 +380,7 @@ func (s *SQLiteStore) LoadUserPrivateKey(address string, kt keys.Type) ([]byte, 
 	if err != nil {
 		return nil, "", err
 	}
-	plaintext, err := s.decryptIfNeeded(priv, salt, nonce)
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce, keyID)
 	if err != nil {
 		return nil, "", err
 	}
