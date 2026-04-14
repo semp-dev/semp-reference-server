@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ type Server struct {
 	blockList *store.SQLiteBlockList
 	policy    *Policy
 	users     map[string]string // address → password
+
+	registerRL *ipRateLimiter
 
 	metrics *Metrics
 	httpSrv *http.Server
@@ -173,6 +176,10 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		users[u.Address] = u.Password
 	}
 
+	// Rate limiter for /v1/register: 10 requests per minute per IP
+	// (security audit finding 1.5).
+	regRL := newIPRateLimiter(10, time.Minute)
+
 	s := &Server{
 		domain:         cfg.Domain,
 		listenAddr:     cfg.ListenAddr,
@@ -195,6 +202,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		blockList:      blockList,
 		policy:         policy,
 		users:          users,
+		registerRL:     regRL,
 		metrics:        metrics,
 		logger:         logger,
 	}
@@ -240,13 +248,17 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/v1/blocklist/", s.handleBlockList)
 	mux.Handle("/debug/metrics", s.metrics.handler())
 
+	// Wrap the mux with panic recovery so that a handler panic does not
+	// crash the entire server process (security audit finding 6.3).
+	recovered := s.recoveryHandler(mux)
+
 	var tlsCfgHTTP *tls.Config
 	if s.tlsCert != "" && s.tlsKey != "" {
 		tlsCfgHTTP, _ = loadTLSConfig(s.tlsCert, s.tlsKey, "h2", "http/1.1")
 	}
 	s.httpSrv = &http.Server{
 		Addr:              s.listenAddr,
-		Handler:           mux,
+		Handler:           recovered,
 		TLSConfig:         tlsCfgHTTP,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -338,6 +350,27 @@ func loadTLSConfig(certFile, keyFile string, nextProtos ...string) (*tls.Config,
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   nextProtos,
 	}, nil
+}
+
+// recoveryHandler returns an http.Handler that catches panics from the
+// wrapped handler, logs them, and returns a generic 500 response without
+// exposing stack traces to the client (security audit finding 6.3).
+func (s *Server) recoveryHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				stack := debug.Stack()
+				s.logger.Error("panic recovered in HTTP handler",
+					"panic", rec,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"stack", string(stack),
+				)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // fetchDomainSigningKeyFromWellKnown fetches a domain's signing public key.

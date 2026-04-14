@@ -73,6 +73,13 @@ CREATE TABLE IF NOT EXISTS inbox (
     stored_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_inbox_address ON inbox(address);
+
+CREATE TABLE IF NOT EXISTS delivered_ids (
+    address      TEXT NOT NULL,
+    envelope_id  TEXT NOT NULL,
+    delivered_at TEXT NOT NULL,
+    PRIMARY KEY (address, envelope_id)
+);
 `
 
 // InitDB opens or creates a SQLite database at path, applies the schema,

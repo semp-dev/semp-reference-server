@@ -70,6 +70,12 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 	s.logger.Info("client disconnected", "peer", conn.Peer())
 }
 
+// handleFederation handles incoming federation connections.
+//
+// NOTE: Production deployments should limit the maximum number of concurrent
+// federation sessions to prevent resource exhaustion (security audit finding 1.6).
+// This can be done by configuring the Forwarder's MaxSessions parameter or by
+// adding a semaphore here to cap concurrent handleFederation goroutines.
 func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 	defer conn.Close()
 	s.logger.Info("federation peer connected", "peer", conn.Peer())
@@ -131,6 +137,12 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Rate limit: 10 requests per minute per IP (security audit finding 1.5).
+	if !s.registerRL.allow(clientIP(r)) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 
@@ -364,6 +376,14 @@ func (s *Server) handleBlockList(w http.ResponseWriter, r *http.Request) {
 		address := r.URL.Query().Get("address")
 		if address == "" {
 			http.Error(w, "missing address parameter", http.StatusBadRequest)
+			return
+		}
+		// Require authentication to prevent unauthorized enumeration of
+		// another user's block list (security audit finding 2.5).
+		password := r.URL.Query().Get("password")
+		expectedPassword, knownUser := s.users[address]
+		if !knownUser || password != expectedPassword {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		entries, err := s.blockList.ListEntries(r.Context(), address)

@@ -48,7 +48,8 @@
       "Bash(sed -i '' '/Configuration: \\\\&discovery.Configuration{/{n;s/Version:/Type:    \"SEMP_CONFIGURATION\",\\\\n\\\\t\\\\t\\\\tVersion:/;}' test/discovery_forwarder_test.go)",
       "Bash(sed -i '' '/json.NewEncoder\\(w\\).Encode\\(discovery.Configuration{/{n;s/Version:/Type:    \"SEMP_CONFIGURATION\",\\\\n\\\\t\\\\t\\\\tVersion:/;}' cmd/semp-server/main.go)",
       "Bash(sed -i '' '/json.NewEncoder\\(w\\).Encode\\(discovery.Configuration{/{n;s/Version:/Type:   \"SEMP_CONFIGURATION\",\\\\n\\\\t\\\\t\\\\tVersion:/;}' discovery/discovery_test.go)",
-      "Bash(curl -s \"https://proxy.golang.org/semp.dev/semp-go/@v/v0.3.0.info\")"
+      "Bash(curl -s \"https://proxy.golang.org/semp.dev/semp-go/@v/v0.3.0.info\")",
+      "Bash(go vet:*)"
     ]
   }
 }
