@@ -42,6 +42,7 @@ type Server struct {
 	domainSignPriv []byte
 	domainEncFP    keys.Fingerprint
 	domainEncPriv  []byte
+	domainEncPub   []byte
 
 	store     *store.SQLiteStore
 	inbox     *delivery.Inbox
@@ -75,7 +76,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	logger.Info("crypto suite", "suite", cfg.Crypto.Suite)
 
-	signFP, signPriv, encFP, encPriv, err := keygen.EnsureDomainKeys(
+	signFP, signPriv, encFP, encPriv, encPub, err := keygen.EnsureDomainKeys(
 		sqlStore, suite, cfg.Domain, logger)
 	if err != nil {
 		return nil, fmt.Errorf("domain keys: %w", err)
@@ -186,6 +187,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		domainSignPriv: signPriv,
 		domainEncFP:    encFP,
 		domainEncPriv:  encPriv,
+		domainEncPub:   encPub,
 		store:          sqlStore,
 		inbox:          memInbox,
 		sqlInbox:       sqlInbox,
