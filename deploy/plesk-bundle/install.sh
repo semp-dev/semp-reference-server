@@ -30,17 +30,24 @@ log() { printf '>>> %s\n' "$*"; }
 command -v docker >/dev/null 2>&1 || err "docker is not installed"
 
 BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
-[[ -f "${BUNDLE_DIR}/semp-server.tar" ]] || err "semp-server.tar not found next to install.sh; is this the right directory?"
 [[ -f "${BUNDLE_DIR}/semp.toml.example" ]] || err "semp.toml.example missing from bundle"
 [[ -f "${BUNDLE_DIR}/plesk-nginx.conf" ]] || err "plesk-nginx.conf missing from bundle"
 
-log "loading image from semp-server.tar"
-docker load -i "${BUNDLE_DIR}/semp-server.tar"
-
-# The saved image may be tagged with a git sha or "latest"; normalise.
-LOADED=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^semp-server:' | head -n1)
-[[ -n "${LOADED}" ]] || err "no semp-server image found after docker load"
-docker tag "${LOADED}" "${IMAGE_TAG}"
+# Make sure the image is loaded. Either it was pre-loaded via
+# 'docker load -i semp-server-plesk.tar' (the build-plesk-image.sh
+# flow), or there's a semp-server.tar sitting next to this script
+# (the older make-plesk-bundle.sh flow that we still tolerate).
+if ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+    if [[ -f "${BUNDLE_DIR}/semp-server.tar" ]]; then
+        log "loading image from semp-server.tar"
+        docker load -i "${BUNDLE_DIR}/semp-server.tar"
+        LOADED=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^semp-server:' | head -n1)
+        [[ -n "${LOADED}" ]] || err "no semp-server image found after docker load"
+        docker tag "${LOADED}" "${IMAGE_TAG}"
+    else
+        err "image ${IMAGE_TAG} is not loaded; run 'sudo docker load -i semp-server-plesk.tar' first"
+    fi
+fi
 
 mkdir -p "${INSTALL_DIR}/config" "${INSTALL_DIR}/data"
 

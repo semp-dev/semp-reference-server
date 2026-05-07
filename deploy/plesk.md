@@ -9,48 +9,50 @@ Plesk Obsidian can run the SEMP reference server through its **Docker** extensio
 * DNS SRV/TXT records for the email domain (see the main README's "DNS Records" section)
 * SSH access to the server (only for the SSH-based bundle install path)
 
-## Recommended: prebuilt bundle
+## Recommended: prebuilt image with helpers baked in
 
-Build a self-contained tarball on your local machine (Docker required), upload it to the Plesk host, and run the included installer. The Plesk server doesn't need git, Go, or any build tooling.
+Build a Docker image on your local machine with the operator helpers (installer, nginx directives, config template, README) baked into `/usr/share/semp/`, export it via `docker save` to a single `.tar`, upload that, and the rest is `docker load` + `docker cp` + run the installer. No second artifact, no git or Go on the Plesk host.
+
+The image is built with `docker buildx --platform linux/amd64 --provenance=false --sbom=false`, which produces a classic single-platform `docker save` archive — the same shape Plesk's File Manager already swallows for any other Docker image upload.
 
 ### On your local machine
 
 ```sh
 git clone https://github.com/semp-dev/semp-reference-server
 cd semp-reference-server
-./deploy/make-plesk-bundle.sh
+./deploy/build-plesk-image.sh
 ```
 
-This produces `deploy/dist/semp-plesk-bundle.tar` containing the saved Docker image, a config template, the nginx directive block, and an installer.
+Output: `deploy/dist/semp-server-plesk.tar` (about 9 MB).
 
 ### On the Plesk host
 
-Upload the tarball via Plesk's File Manager or SFTP, then either:
-
-**SSH path (recommended)**
+Upload `semp-server-plesk.tar` via Plesk File Manager or SFTP, then:
 
 ```sh
-tar -xf semp-plesk-bundle.tar
-cd semp-plesk-bundle
-sudo ./install.sh
+# 1. Load the image
+sudo docker load -i semp-server-plesk.tar
+
+# 2. Extract operator helpers from the image to /opt/semp/
+sudo mkdir -p /opt/semp
+sudo docker create --name semp-bootstrap semp-server:latest
+sudo docker cp semp-bootstrap:/usr/share/semp/. /opt/semp/
+sudo docker rm semp-bootstrap
+
+# 3. First install run — scaffolds /opt/semp/config/semp.toml, exits
+sudo /opt/semp/install.sh
+
+# Edit /opt/semp/config/semp.toml: set 'domain' and add [[users]]
+
+# 4. Second run — starts the container and prints Plesk UI steps
+sudo /opt/semp/install.sh
 ```
 
-First run scaffolds `/opt/semp/config/semp.toml` and exits so you can edit `domain` and add `[[users]]`. Re-run to load the image, start the container, and print the next steps for the Plesk UI.
-
-**Plesk Docker UI path (no SSH)**
-
-1. Extract the tarball through Plesk File Manager.
-2. **Plesk → Docker → Images → Add Image → Upload from local file**, select `semp-server.tar` from the extracted directory.
-3. Edit `semp.toml.example` to set your `domain` and `[[users]]`, save it as `/var/lib/semp/semp.toml`.
-4. **Plesk → Docker → Run** for `semp-server:latest` with port `8443` mapped to host `127.0.0.1:18443` and volumes for `/var/lib/semp` (data) and `/var/lib/semp/semp.toml` (config, read-only).
-
-After the container is running, follow steps 3–6 of the manual section below (Let's Encrypt cert, paste `plesk-nginx.conf` directives, uncheck static-file shortcuts).
-
-The bundle includes a complete `README.md` covering both paths in detail.
+The extracted `/opt/semp/README.md` covers what the install steps do and what's left for the Plesk UI (Let's Encrypt cert, paste `plesk-nginx.conf` into Additional nginx directives, uncheck the static-file shortcuts).
 
 ## Manual steps
 
-If you'd rather build on the Plesk host directly:
+If you'd rather build directly on the Plesk host instead of using the prebuilt image:
 
 ### 1. Build the image
 
