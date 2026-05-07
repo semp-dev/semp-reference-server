@@ -7,9 +7,50 @@ Plesk Obsidian can run the SEMP reference server through its **Docker** extensio
 * Plesk Obsidian with the **Docker** extension installed
 * A domain or subdomain in Plesk (e.g. `semp.example.com`) with DNS pointing at the server
 * DNS SRV/TXT records for the email domain (see the main README's "DNS Records" section)
-* SSH access to the server
+* SSH access to the server (only for the SSH-based bundle install path)
 
-## Steps
+## Recommended: prebuilt bundle
+
+Build a self-contained tarball on your local machine (Docker required), upload it to the Plesk host, and run the included installer. The Plesk server doesn't need git, Go, or any build tooling.
+
+### On your local machine
+
+```sh
+git clone https://github.com/semp-dev/semp-reference-server
+cd semp-reference-server
+./deploy/make-plesk-bundle.sh
+```
+
+This produces `deploy/dist/semp-plesk-bundle.tar.gz` containing the saved Docker image, a config template, the nginx directive block, and an installer.
+
+### On the Plesk host
+
+Upload the tarball via Plesk's File Manager or SFTP, then either:
+
+**SSH path (recommended)**
+
+```sh
+tar -xzf semp-plesk-bundle.tar.gz
+cd semp-plesk-bundle
+sudo ./install.sh
+```
+
+First run scaffolds `/opt/semp/config/semp.toml` and exits so you can edit `domain` and add `[[users]]`. Re-run to load the image, start the container, and print the next steps for the Plesk UI.
+
+**Plesk Docker UI path (no SSH)**
+
+1. Extract the tarball through Plesk File Manager.
+2. **Plesk → Docker → Images → Add Image → Upload from local file**, select `semp-server.tar` from the extracted directory.
+3. Edit `semp.toml.example` to set your `domain` and `[[users]]`, save it as `/var/lib/semp/semp.toml`.
+4. **Plesk → Docker → Run** for `semp-server:latest` with port `8443` mapped to host `127.0.0.1:18443` and volumes for `/var/lib/semp` (data) and `/var/lib/semp/semp.toml` (config, read-only).
+
+After the container is running, follow steps 3–6 of the manual section below (Let's Encrypt cert, paste `plesk-nginx.conf` directives, uncheck static-file shortcuts).
+
+The bundle includes a complete `README.md` covering both paths in detail.
+
+## Manual steps
+
+If you'd rather build on the Plesk host directly:
 
 ### 1. Build the image
 

@@ -6,10 +6,11 @@ domain = "example.com"
 # Listen on plain HTTP inside the container. Caddy handles TLS termination.
 listen_addr = ":8443"
 
-# No TLS here — Caddy provides HTTPS with automatic Let's Encrypt certs.
-# [tls]
-# cert_file = ""
-# key_file  = ""
+# No TLS terminated here. The reverse proxy (Caddy, Traefik, nginx, Plesk)
+# handles HTTPS upstream. external_tls = true makes the discovery endpoint
+# advertise wss:// instead of ws:// so clients negotiate a secure transport.
+[tls]
+external_tls = true
 
 [database]
 path = "/var/lib/semp/semp.db"
