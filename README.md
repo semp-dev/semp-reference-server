@@ -168,6 +168,7 @@ Platform-specific recipes are kept in [`deploy/`](deploy/) so they can be update
 
 * [Dokploy](deploy/dokploy.md) — Compose-based, Traefik handles TLS and WebSocket upgrades automatically
 * [Coolify](deploy/coolify.md) — same shape as Dokploy, slightly different label syntax
+* [Portainer](deploy/portainer.md) — Stack with bundled Caddy for TLS (Portainer doesn't ship its own reverse proxy)
 * [Plesk](deploy/plesk.md) — Docker extension behind Plesk's nginx, requires manual WebSocket directives
 
 These are reference recipes, not officially supported targets. The protocol does not depend on any of them.
@@ -410,7 +411,7 @@ SQLite (via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), pure Go
 
 ## Dependencies
 
-- [`semp.dev/semp-go`](https://github.com/semp-dev/semp-go) v0.2.2 — SEMP protocol library
+- [`semp.dev/semp-go`](https://github.com/semp-dev/semp-go) v0.4.0 — SEMP protocol library
 - [`github.com/BurntSushi/toml`](https://github.com/BurntSushi/toml) — TOML configuration
 - [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — Pure-Go SQLite driver
 

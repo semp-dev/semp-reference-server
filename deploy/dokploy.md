@@ -19,7 +19,17 @@ In the Dokploy UI:
 * Branch: `master`
 * Compose path: `deploy/docker-compose.yml`
 
-### 2. Override the compose file
+### 2. Set the SEMP_HOST environment variable
+
+In the Dokploy service's **Environment** tab, add:
+
+```
+SEMP_HOST=semp.example.com
+```
+
+Use your actual hostname. The compose file in the next step substitutes this value into the Traefik router rule, so a missing or wrong value here is the most common cause of a 404 from Traefik.
+
+### 3. Override the compose file
 
 Replace the rendered compose with:
 
@@ -37,7 +47,7 @@ services:
       - dokploy-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.semp.rule=Host(`semp.example.com`)"
+      - "traefik.http.routers.semp.rule=Host(`${SEMP_HOST:?SEMP_HOST must be set in the Environment tab}`)"
       - "traefik.http.routers.semp.entrypoints=websecure"
       - "traefik.http.routers.semp.tls.certresolver=letsencrypt"
       - "traefik.http.services.semp.loadbalancer.server.port=8443"
@@ -50,9 +60,9 @@ volumes:
   semp-data:
 ```
 
-Replace `semp.example.com` with your hostname.
+The `${SEMP_HOST:?...}` syntax fails the deploy with a clear error if the env var is unset, instead of silently routing nowhere.
 
-### 3. Configure semp.toml
+### 4. Configure semp.toml
 
 Edit `deploy/semp.toml` (Dokploy will mount it into the container):
 
@@ -84,7 +94,7 @@ If discovery responses need to advertise `wss://` (they will, in production), ad
 external_tls = true
 ```
 
-### 4. Deploy
+### 5. Deploy
 
 Click **Deploy**. Traefik issues the Let's Encrypt certificate on first request. WebSocket upgrades pass through automatically.
 

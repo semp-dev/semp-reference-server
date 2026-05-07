@@ -19,7 +19,17 @@ In the Coolify UI:
 * Set **Base Directory** to `/deploy`
 * Set **Docker Compose Location** to `/deploy/docker-compose.yml`
 
-### 2. Override the compose file
+### 2. Set the SEMP_HOST environment variable
+
+In the Coolify resource's **Environment Variables** tab, add:
+
+```
+SEMP_HOST=semp.example.com
+```
+
+Use your actual hostname. The compose file in the next step substitutes this value into the Traefik router rule, so a missing or wrong value here is the most common cause of a 404 from Traefik.
+
+### 3. Override the compose file
 
 Coolify lets you edit the compose inline. Replace it with:
 
@@ -35,7 +45,7 @@ services:
       - ./semp.toml:/etc/semp/semp.toml:ro
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.semp.rule=Host(`semp.example.com`)"
+      - "traefik.http.routers.semp.rule=Host(`${SEMP_HOST:?SEMP_HOST must be set in Environment Variables}`)"
       - "traefik.http.routers.semp.entrypoints=https"
       - "traefik.http.routers.semp.tls=true"
       - "traefik.http.routers.semp.tls.certresolver=letsencrypt"
@@ -45,9 +55,9 @@ volumes:
   semp-data:
 ```
 
-Replace `semp.example.com` with your hostname. Coolify automatically attaches the service to its proxy network, so no `networks:` block is needed.
+Coolify automatically attaches the service to its proxy network, so no `networks:` block is needed. The `${SEMP_HOST:?...}` syntax fails the deploy with a clear error if the env var is unset.
 
-### 3. Configure semp.toml
+### 4. Configure semp.toml
 
 Edit `deploy/semp.toml` in the repo (or use Coolify's **Mounts** tab to provide a file at `/etc/semp/semp.toml`):
 
@@ -75,11 +85,11 @@ external_tls = true
 
 Leave `cert_file` and `key_file` unset. Traefik terminates TLS, and `external_tls = true` makes the discovery endpoint advertise `wss://` instead of `ws://`.
 
-### 4. Set the domain
+### 5. Set the domain
 
-In the Coolify service's **General** tab, set the FQDN to `https://semp.example.com`. Coolify generates the matching Traefik labels, but the explicit ones in the compose above take precedence and pin the upstream port to `8443`.
+In the Coolify service's **General** tab, set the FQDN to `https://semp.example.com` (matching whatever you put in `SEMP_HOST`). Coolify generates baseline Traefik labels from the FQDN, but the explicit ones in the compose above take precedence and pin the upstream port to `8443`.
 
-### 5. Deploy
+### 6. Deploy
 
 Click **Deploy**. Coolify builds the Dockerfile, starts the container, and Traefik issues the certificate on first request.
 
