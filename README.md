@@ -162,6 +162,16 @@ SQLite database is persisted in a Docker volume (`semp-data`). Back it up with:
 docker cp $(docker ps -qf name=semp-server):/var/lib/semp/semp.db ./semp-backup.db
 ```
 
+## Deploying on a PaaS
+
+Platform-specific recipes are kept in [`deploy/`](deploy/) so they can be updated independently of the main README:
+
+* [Dokploy](deploy/dokploy.md) — Compose-based, Traefik handles TLS and WebSocket upgrades automatically
+* [Coolify](deploy/coolify.md) — same shape as Dokploy, slightly different label syntax
+* [Plesk](deploy/plesk.md) — Docker extension behind Plesk's nginx, requires manual WebSocket directives
+
+These are reference recipes, not officially supported targets. The protocol does not depend on any of them.
+
 ## Connecting with the Reference Client
 
 The [SEMP Reference Client](https://github.com/semp-dev/semp-reference-client) provides both a CLI and a desktop GUI.
