@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -246,18 +247,22 @@ func (s *SQLiteStore) PutRevocation(ctx context.Context, keyID keys.Fingerprint,
 	return err
 }
 
-// LookupDeviceCertificate returns the device certificate for deviceKeyID.
+// LookupDeviceCertificate returns the device certificate keyed by the
+// device's public-key fingerprint. The fingerprint is the SQL primary
+// key: callers that have a (device_id) only must look up via a
+// separate index, but this server's flow always carries the
+// fingerprint at the points where the cert is needed.
 func (s *SQLiteStore) LookupDeviceCertificate(ctx context.Context, deviceKeyID keys.Fingerprint) (*keys.DeviceCertificate, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT user_id, device_id, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json
+		`SELECT user_id, device_id, device_public_key, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json
 		   FROM device_certificates WHERE device_key_id = ?`,
 		string(deviceKeyID))
 
 	var (
-		userID, deviceID, issuingKeyID, scopeJSON, issuedAtStr, sigJSON string
-		expiresAt                                                       sql.NullString
+		account, deviceID, devicePub, issuedBy, scopeJSON, issuedAtStr, sigJSON string
+		expiresAt                                                               sql.NullString
 	)
-	err := row.Scan(&userID, &deviceID, &issuingKeyID, &scopeJSON, &issuedAtStr, &expiresAt, &sigJSON)
+	err := row.Scan(&account, &deviceID, &devicePub, &issuedBy, &scopeJSON, &issuedAtStr, &expiresAt, &sigJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -265,36 +270,58 @@ func (s *SQLiteStore) LookupDeviceCertificate(ctx context.Context, deviceKeyID k
 		return nil, err
 	}
 	cert := &keys.DeviceCertificate{
-		UserID:             userID,
-		DeviceID:           deviceID,
-		DeviceKeyID:        deviceKeyID,
-		IssuingDeviceKeyID: keys.Fingerprint(issuingKeyID),
+		Type:            "SEMP_DEVICE_CERTIFICATE",
+		Version:         "1.0.0",
+		DeviceID:        deviceID,
+		DevicePublicKey: devicePub,
+		Account:         account,
+		IssuedBy:        issuedBy,
 	}
 	cert.IssuedAt, _ = time.Parse(time.RFC3339, issuedAtStr)
 	if expiresAt.Valid {
-		cert.Expires, _ = time.Parse(time.RFC3339, expiresAt.String)
+		cert.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt.String)
 	}
 	_ = json.Unmarshal([]byte(scopeJSON), &cert.Scope)
 	_ = json.Unmarshal([]byte(sigJSON), &cert.Signature)
 	return cert, nil
 }
 
-// PutDeviceCertificate stores a device certificate.
+// PutDeviceCertificate stores a device certificate. The SQL primary
+// key (device_key_id) is the fingerprint of cert.DevicePublicKey,
+// computed at write time so the cert struct does not need to carry it.
 func (s *SQLiteStore) PutDeviceCertificate(ctx context.Context, cert *keys.DeviceCertificate) error {
 	scopeJSON, _ := json.Marshal(cert.Scope)
 	sigJSON, _ := json.Marshal(cert.Signature)
 	expiresAt := ""
-	if !cert.Expires.IsZero() {
-		expiresAt = cert.Expires.Format(time.RFC3339)
+	if !cert.ExpiresAt.IsZero() {
+		expiresAt = cert.ExpiresAt.Format(time.RFC3339)
 	}
-	_, err := s.db.ExecContext(ctx,
+	deviceKeyID, err := devicePubKeyFingerprint(cert.DevicePublicKey)
+	if err != nil {
+		return fmt.Errorf("store: derive device key fingerprint: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO device_certificates
-		 (device_key_id, user_id, device_id, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(cert.DeviceKeyID), cert.UserID, cert.DeviceID,
-		string(cert.IssuingDeviceKeyID), string(scopeJSON),
+		 (device_key_id, user_id, device_id, device_public_key, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(deviceKeyID), cert.Account, cert.DeviceID, cert.DevicePublicKey,
+		cert.IssuedBy, string(scopeJSON),
 		cert.IssuedAt.Format(time.RFC3339), expiresAt, string(sigJSON))
 	return err
+}
+
+// devicePubKeyFingerprint base64-decodes pubB64 and returns
+// keys.Compute over the bytes. Returns an error when the input is
+// empty or not valid base64.
+func devicePubKeyFingerprint(pubB64 string) (keys.Fingerprint, error) {
+	if pubB64 == "" {
+		return "", fmt.Errorf("device_public_key is empty")
+	}
+	pub, err := base64.StdEncoding.DecodeString(pubB64)
+	if err != nil {
+		return "", fmt.Errorf("device_public_key base64: %w", err)
+	}
+	return keys.Compute(pub), nil
 }
 
 // --- SharedStore methods (for inboxd.Forwarder) ---

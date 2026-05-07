@@ -484,20 +484,20 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cert := &req.Certificate
-	if cert.UserID == "" || cert.DeviceKeyID == "" {
-		http.Error(w, "certificate must include user_id and device_key_id", http.StatusBadRequest)
+	if cert.Account == "" || cert.DeviceID == "" || cert.DevicePublicKey == "" {
+		http.Error(w, "certificate must include account, device_id, and device_public_key", http.StatusBadRequest)
 		return
 	}
 
 	// Verify the user exists on this server.
-	if _, ok := s.users[cert.UserID]; !ok {
+	if _, ok := s.users[cert.Account]; !ok {
 		http.Error(w, "unknown user", http.StatusForbidden)
 		return
 	}
 
 	// Verify the certificate signature chain.
 	if err := cert.VerifyChain(r.Context(), s.suite, s.store); err != nil {
-		s.logger.Warn("device certificate verification failed", "user", cert.UserID, "device", cert.DeviceID, "err", err)
+		s.logger.Warn("device certificate verification failed", "user", cert.Account, "device", cert.DeviceID, "err", err)
 		http.Error(w, "certificate verification failed", http.StatusUnauthorized)
 		return
 	}
@@ -523,7 +523,7 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 
 	idFP := keys.Compute(idPub)
 	if err := s.store.PutRecord(r.Context(), &keys.Record{
-		Address:   cert.UserID,
+		Address:   cert.Account,
 		Type:      keys.TypeDevice,
 		Algorithm: req.DeviceIdentityKey.Algorithm,
 		PublicKey: req.DeviceIdentityKey.PublicKey,
@@ -535,7 +535,7 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 
 	encFP := keys.Compute(encPub)
 	if err := s.store.PutRecord(r.Context(), &keys.Record{
-		Address:   cert.UserID,
+		Address:   cert.Account,
 		Type:      keys.TypeEncryption,
 		Algorithm: req.DeviceEncryptionKey.Algorithm,
 		PublicKey: req.DeviceEncryptionKey.PublicKey,
@@ -545,10 +545,11 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	devicePub, _ := base64.StdEncoding.DecodeString(cert.DevicePublicKey)
 	s.logger.Info("device registered",
-		"user", cert.UserID,
+		"user", cert.Account,
 		"device", cert.DeviceID,
-		"device_key", cert.DeviceKeyID,
+		"device_key", keys.Compute(devicePub),
 		"scope_send", cert.Scope.Send.Mode,
 	)
 

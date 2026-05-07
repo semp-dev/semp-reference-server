@@ -50,8 +50,14 @@ CREATE TABLE IF NOT EXISTS device_certificates (
     scope_json          TEXT NOT NULL,
     issued_at           TEXT NOT NULL,
     expires_at          TEXT,
-    signature_json      TEXT NOT NULL
+    signature_json      TEXT NOT NULL,
+    device_public_key   TEXT NOT NULL DEFAULT ''
 );
+-- Defensive ADD COLUMN for databases created before semp-go v0.4.0 added
+-- DevicePublicKey to the DeviceCertificate struct. SQLite ignores
+-- duplicates of an already-present column at this guard's level so the
+-- statement is safe to re-run on every startup; we tolerate the error
+-- raised on existing schemas via the InitDB wrapper.
 
 CREATE TABLE IF NOT EXISTS block_entries (
     id           TEXT NOT NULL PRIMARY KEY,
@@ -103,5 +109,41 @@ func InitDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: schema init: %w", err)
 	}
+	// Apply post-schema migrations. ALTER TABLE ADD COLUMN is the
+	// minimal-disruption way to grow existing databases; SQLite raises a
+	// "duplicate column name" error when the column already exists, which
+	// we swallow.
+	for _, alter := range []string{
+		`ALTER TABLE device_certificates ADD COLUMN device_public_key TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(alter); err != nil && !isDuplicateColumnErr(err) {
+			db.Close()
+			return nil, fmt.Errorf("store: migration %q: %w", alter, err)
+		}
+	}
 	return db, nil
+}
+
+// isDuplicateColumnErr returns true when err is the SQLite error raised
+// for an ALTER TABLE ADD COLUMN whose column already exists. The error
+// text is matched by substring because modernc.org/sqlite does not
+// surface the underlying SQLITE_ERROR code as a typed constant.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return contains(msg, "duplicate column name") || contains(msg, "already exists")
+}
+
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 || len(haystack) < len(needle) {
+		return needle == ""
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }
