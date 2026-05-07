@@ -4,7 +4,7 @@
 # Run on a developer machine that has docker and go (the build runs
 # inside a container, so go is not strictly required). Output:
 #
-#   deploy/dist/semp-plesk-bundle.tar.gz
+#   deploy/dist/semp-plesk-bundle.tar
 #
 # Upload that tarball to your Plesk server (File Manager or SFTP),
 # extract it, and follow the included README.md.
@@ -19,7 +19,7 @@ REPO_ROOT="$(pwd)"
 DIST_DIR="${REPO_ROOT}/deploy/dist"
 BUNDLE_DIR_NAME="semp-plesk-bundle"
 STAGING="${DIST_DIR}/${BUNDLE_DIR_NAME}"
-TARBALL="${DIST_DIR}/${BUNDLE_DIR_NAME}.tar.gz"
+TARBALL="${DIST_DIR}/${BUNDLE_DIR_NAME}.tar"
 
 command -v docker >/dev/null 2>&1 || err "docker is required"
 command -v tar >/dev/null 2>&1 || err "tar is required"
@@ -61,7 +61,7 @@ EOF
 
 log "creating tarball ${TARBALL}"
 rm -f "${TARBALL}"
-tar -czf "${TARBALL}" -C "${DIST_DIR}" "${BUNDLE_DIR_NAME}"
+tar -cf "${TARBALL}" -C "${DIST_DIR}" "${BUNDLE_DIR_NAME}"
 
 log "cleaning up staging"
 rm -rf "${STAGING}"

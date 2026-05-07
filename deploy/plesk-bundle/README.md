@@ -71,7 +71,7 @@ Expect `101 Switching Protocols`.
 
 ## Updating
 
-Build a new bundle locally with `./deploy/make-plesk-bundle.sh`, upload the resulting `semp-plesk-bundle.tar.gz`, extract it (overwriting the previous extraction), and re-run `sudo ./install.sh`. The installer stops the old container, loads the new image, and starts the new container against the same `/opt/semp/config/semp.toml` and `/opt/semp/data` volumes.
+Build a new bundle locally with `./deploy/make-plesk-bundle.sh`, upload the resulting `semp-plesk-bundle.tar`, extract it (overwriting the previous extraction), and re-run `sudo ./install.sh`. The installer stops the old container, loads the new image, and starts the new container against the same `/opt/semp/config/semp.toml` and `/opt/semp/data` volumes.
 
 ## Logs
 

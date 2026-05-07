@@ -21,7 +21,7 @@ cd semp-reference-server
 ./deploy/make-plesk-bundle.sh
 ```
 
-This produces `deploy/dist/semp-plesk-bundle.tar.gz` containing the saved Docker image, a config template, the nginx directive block, and an installer.
+This produces `deploy/dist/semp-plesk-bundle.tar` containing the saved Docker image, a config template, the nginx directive block, and an installer.
 
 ### On the Plesk host
 
@@ -30,7 +30,7 @@ Upload the tarball via Plesk's File Manager or SFTP, then either:
 **SSH path (recommended)**
 
 ```sh
-tar -xzf semp-plesk-bundle.tar.gz
+tar -xf semp-plesk-bundle.tar
 cd semp-plesk-bundle
 sudo ./install.sh
 ```
