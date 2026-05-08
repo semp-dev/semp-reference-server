@@ -153,15 +153,21 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		Store:    sqlStore,
 		Resolver: resolver,
 		FederationEndpointFunc: func(result *discovery.Result) (string, error) {
-			ep, err := inboxd.DefaultFederationEndpointFunc(result)
-			if err != nil {
-				return "", err
+			// Prefer the federation endpoints map from a well-known
+			// configuration when available. Per TRANSPORT.md, HTTP/2 is the
+			// mandatory baseline, so try federation.h2 before federation.ws.
+			// Fall back to DefaultFederationEndpointFunc only when the peer
+			// did not publish a configuration (DNS-only resolution).
+			if result != nil && result.Configuration != nil {
+				fed := result.Configuration.Endpoints.Federation
+				if ep, ok := fed["h2"]; ok && ep != "" {
+					return ep, nil
+				}
+				if ep, ok := fed["ws"]; ok && ep != "" {
+					return ep, nil
+				}
 			}
-			// Convert ws:// endpoints to https:// for HTTP/2 federation.
-			ep = strings.Replace(ep, "wss://", "https://", 1)
-			ep = strings.Replace(ep, "ws://", "http://", 1)
-			ep = strings.Replace(ep, "/v1/ws", "/v1/federate", 1)
-			return ep, nil
+			return inboxd.DefaultFederationEndpointFunc(result)
 		},
 	})
 

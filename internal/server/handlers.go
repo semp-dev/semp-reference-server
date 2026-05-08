@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	semp "semp.dev/semp-go"
 	"semp.dev/semp-go/delivery"
@@ -168,6 +169,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid identity key", http.StatusBadRequest)
 		return
 	}
+	now := time.Now().UTC()
+	expires := now.Add(365 * 24 * time.Hour)
 	idFP := keys.Compute(idPub)
 	if err := s.store.PutRecord(r.Context(), &keys.Record{
 		Address:   req.Address,
@@ -175,6 +178,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Algorithm: req.IdentityKey.Algorithm,
 		PublicKey: req.IdentityKey.PublicKey,
 		KeyID:     idFP,
+		Created:   now,
+		Expires:   expires,
 	}); err != nil {
 		s.logger.Error("store identity key failed", "address", req.Address, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -194,6 +199,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Algorithm: req.EncryptionKey.Algorithm,
 		PublicKey: req.EncryptionKey.PublicKey,
 		KeyID:     encFP,
+		Created:   now,
+		Expires:   expires,
 	}); err != nil {
 		s.logger.Error("store encryption key failed", "address", req.Address, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -521,6 +528,8 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now().UTC()
+	expires := now.Add(365 * 24 * time.Hour)
 	idFP := keys.Compute(idPub)
 	if err := s.store.PutRecord(r.Context(), &keys.Record{
 		Address:   cert.Account,
@@ -528,6 +537,8 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Algorithm: req.DeviceIdentityKey.Algorithm,
 		PublicKey: req.DeviceIdentityKey.PublicKey,
 		KeyID:     idFP,
+		Created:   now,
+		Expires:   expires,
 	}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -540,6 +551,8 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Algorithm: req.DeviceEncryptionKey.Algorithm,
 		PublicKey: req.DeviceEncryptionKey.PublicKey,
 		KeyID:     encFP,
+		Created:   now,
+		Expires:   expires,
 	}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
