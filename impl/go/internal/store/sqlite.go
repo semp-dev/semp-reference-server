@@ -17,7 +17,11 @@ import (
 // well-known endpoint over HTTPS. Returns nil if the key cannot be fetched.
 type DomainKeyFetcher func(domain string) []byte
 
-// SQLiteStore implements keys.Store and inboxd.SharedStore backed by SQLite.
+// SQLiteStore implements keys.Store backed by SQLite. PutDomainKey
+// and the related domain-key helpers are kept around because
+// internal callers (the auto-fetch path on cache miss, the operator
+// pre-seeding logic that caches statically configured peer signing
+// keys at startup) still rely on them.
 type SQLiteStore struct {
 	db               *sql.DB
 	domainKeyFetcher DomainKeyFetcher
@@ -110,8 +114,9 @@ func (s *SQLiteStore) LookupDomainEncryptionKeyCtx(ctx context.Context, domain s
 	return scanDomainRow(row, domain)
 }
 
-// LookupDomainEncryptionKey satisfies the inboxd domainEncKeyLookup interface
-// so the SEMP_KEYS handler includes the domain encryption key in responses.
+// LookupDomainEncryptionKey satisfies the runtime's domainEncKeyLookup
+// interface so the SEMP_KEYS handler includes the domain encryption
+// key in responses when the request asks for it.
 func (s *SQLiteStore) LookupDomainEncryptionKey(domain string) *keys.Record {
 	rec, _ := s.LookupDomainEncryptionKeyCtx(context.Background(), domain)
 	return rec
@@ -324,9 +329,12 @@ func devicePubKeyFingerprint(pubB64 string) (keys.Fingerprint, error) {
 	return keys.Compute(pub), nil
 }
 
-// --- SharedStore methods (for inboxd.Forwarder) ---
+// --- Domain-key helpers (used internally for caching) ---
 
 // PutDomainKey stores a peer domain's signing public key and returns its fingerprint.
+// Used internally by the auto-fetch path on LookupDomainKey cache misses
+// and by the operator startup logic that pre-seeds statically configured
+// peer signing keys.
 func (s *SQLiteStore) PutDomainKey(domain string, pub []byte) keys.Fingerprint {
 	fp := keys.Compute(pub)
 	now := time.Now().UTC().Format(time.RFC3339)

@@ -12,12 +12,13 @@ import (
 )
 
 // SQLiteInbox provides crash-recovery durability around the in-memory
-// delivery.Inbox that inboxd.Server requires. Envelopes stored through
-// this wrapper are written to both SQLite and the in-memory inbox.
+// delivery.Inbox that the runtime delivery pipeline writes to.
+// Envelopes stored through this wrapper are written to both SQLite
+// and the in-memory inbox.
 //
-// The library's inboxd.Server writes directly to *delivery.Inbox via its
-// Inbox field. Those writes hit the in-memory queue only. On startup
-// LoadPending rehydrates the in-memory queue from SQLite.
+// The runtime's delivery.Pipeline writes directly to *delivery.Inbox
+// via its Inbox field. Those writes hit the in-memory queue only.
+// On startup LoadPending rehydrates the in-memory queue from SQLite.
 //
 // A mutex serializes Store and Drain to prevent races on the same address
 // (security audit finding 4.3).
@@ -35,7 +36,9 @@ func NewSQLiteInbox(db *sql.DB) *SQLiteInbox {
 	}
 }
 
-// MemInbox returns the in-memory inbox to pass to inboxd.Server.Inbox.
+// MemInbox returns the in-memory inbox to pass to runtime.ClientDeps.Inbox
+// and runtime.FederationDeps.Inbox (the runtime's pipeline writes to it
+// directly during local delivery).
 func (i *SQLiteInbox) MemInbox() *delivery.Inbox { return i.mem }
 
 // Store persists an envelope to SQLite and the in-memory inbox.

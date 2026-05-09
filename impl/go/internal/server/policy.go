@@ -2,11 +2,8 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"time"
 
-	"semp.dev/semp-go/delivery/inboxd"
 	"semp.dev/semp-go/handshake"
 	"semp.dev/semp-go/reputation"
 	"semp.dev/semp-reference-server/impl/go/internal/config"
@@ -86,15 +83,4 @@ func (p *Policy) RequireChallenge(_, _ string) *handshake.Challenge {
 
 func (p *Policy) BlockedDomain(domain string) bool { return p.blockedDomains[domain] }
 func (p *Policy) SessionTTL(_ string) int          { return p.sessionTTL }
-func (p *Policy) Permissions(_ string) []string     { return p.permissions }
-
-// slogAdapter adapts *slog.Logger to the inboxd.Logger Printf interface.
-type slogAdapter struct {
-	l *slog.Logger
-}
-
-var _ inboxd.Logger = slogAdapter{}
-
-func (a slogAdapter) Printf(format string, args ...any) {
-	a.l.Info(fmt.Sprintf(format, args...))
-}
+func (p *Policy) Permissions(_ string) []string    { return p.permissions }

@@ -11,11 +11,11 @@ import (
 
 	semp "semp.dev/semp-go"
 	"semp.dev/semp-go/delivery"
-	"semp.dev/semp-go/delivery/inboxd"
 	"semp.dev/semp-go/discovery"
 	"semp.dev/semp-go/handshake"
 	"semp.dev/semp-go/keys"
 	"semp.dev/semp-go/transport"
+	"semp.dev/semp-reference-server/impl/go/internal/runtime"
 )
 
 func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
@@ -46,8 +46,7 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 		"ttl", sess.TTL,
 	)
 
-	loop := &inboxd.Server{
-		Mode:           inboxd.ModeClient,
+	deps := runtime.ClientDeps{
 		Suite:          s.suite,
 		Store:          s.store,
 		Inbox:          s.inbox,
@@ -62,9 +61,9 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 		Identity:       srv.ClientIdentity(),
 		DeviceKeyID:    srv.ClientDeviceKeyID(),
 		Session:        sess,
-		Logger:         slogAdapter{s.logger},
+		Logger:         s.logger,
 	}
-	if err := loop.Serve(ctx, conn); err != nil && err != io.EOF {
+	if err := runtime.ServeClient(ctx, conn, deps); err != nil && err != io.EOF {
 		s.logger.Error("client loop ended", "peer", conn.Peer(), "err", err)
 		return
 	}
@@ -73,10 +72,9 @@ func (s *Server) handleClient(ctx context.Context, conn transport.Conn) {
 
 // handleFederation handles incoming federation connections.
 //
-// NOTE: Production deployments should limit the maximum number of concurrent
-// federation sessions to prevent resource exhaustion (security audit finding 1.6).
-// This can be done by configuring the Forwarder's MaxSessions parameter or by
-// adding a semaphore here to cap concurrent handleFederation goroutines.
+// NOTE: production deployments should limit the maximum number of
+// concurrent federation sessions to prevent resource exhaustion
+// (security audit finding 1.6).
 func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 	defer conn.Close()
 	s.logger.Info("federation peer connected", "peer", conn.Peer())
@@ -109,8 +107,7 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 		"ttl", sess.TTL,
 	)
 
-	loop := &inboxd.Server{
-		Mode:           inboxd.ModeFederation,
+	deps := runtime.FederationDeps{
 		Suite:          s.suite,
 		Store:          s.store,
 		Inbox:          s.inbox,
@@ -123,16 +120,16 @@ func (s *Server) handleFederation(ctx context.Context, conn transport.Conn) {
 		DomainEncPub:   s.domainEncPub,
 		Identity:       resp.PeerDomain(),
 		Session:        sess,
-		Logger:         slogAdapter{s.logger},
+		Logger:         s.logger,
 	}
-	if err := loop.Serve(ctx, conn); err != nil && err != io.EOF {
+	if err := runtime.ServeFederation(ctx, conn, deps); err != nil && err != io.EOF {
 		s.logger.Error("federation loop ended", "peer", conn.Peer(), "err", err)
 		return
 	}
 	s.logger.Info("federation peer disconnected", "peer", conn.Peer())
 }
 
-// handleRegister handles POST /v1/register — client key registration.
+// handleRegister handles POST /v1/register; client key registration.
 // The client generates keys locally and pushes its public keys here.
 // The server returns its domain signing and encryption keys.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
