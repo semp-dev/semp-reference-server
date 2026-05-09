@@ -1,0 +1,43 @@
+{
+  "name": "@sempdev/semp-reference-server",
+  "version": "0.5.0",
+  "description": "TypeScript implementation of the SEMP reference server.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/main.js",
+  "bin": {
+    "semp-server": "./bin/semp-server.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.0",
+    "@noble/hashes": "^2.0.0",
+    "@noble/post-quantum": "^0.6.1",
+    "@sempdev/semp": "file:../../../semp-ts",
+    "better-sqlite3": "^11.5.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "smol-toml": "^1.3.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.0"
+  }
+}
