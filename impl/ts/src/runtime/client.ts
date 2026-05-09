@@ -77,17 +77,16 @@ export async function serveClient(deps: ClientDeps): Promise<void> {
       );
       await deps.session.send(out);
     },
-    onUnknown: async (type, frame) => {
-      if (type === "SEMP_FETCH") {
-        const out = handleFetch(
-          frame,
-          deps.inbox.memInbox(),
-          deps.identity,
-          deps.logger,
-        );
-        await deps.session.send(out);
-        return;
-      }
+    onFetch: async (frame) => {
+      const out = handleFetch(
+        frame,
+        deps.inbox.memInbox(),
+        deps.identity,
+        deps.logger,
+      );
+      await deps.session.send(out);
+    },
+    onUnknown: async (type) => {
       deps.logger?.warn({ type }, "unknown client message type");
     },
     onHandlerError: (err, type) => {

@@ -6,6 +6,7 @@
 
 import {
   KeysRequestType,
+  newKeysRequest,
   newKeysResponse,
   signSignedDoc,
   type KeysRequest,
@@ -59,17 +60,41 @@ export async function handleClientKeys(
       results.push(local);
       continue;
     }
-    // Cross-domain SEMP_KEYS lookup over the federation forwarder is
-    // not exposed by semp-ts v0.5.0 (only `forward` for envelopes).
-    // The Go impl uses Forwarder.FetchKeys; in TS we report not_found
-    // for remote addresses until a parity helper lands upstream.
-    void deps.forwarder;
-    results.push({
-      address: addr,
-      status: "not_found",
-      domain: d,
-      user_keys: [],
-    });
+    // Cross-domain: forward the lookup over the cached federation
+    // session via Forwarder.fetchKeys (semp-ts v0.5.1+).
+    if (deps.forwarder === null) {
+      results.push({
+        address: addr,
+        status: "not_found",
+        domain: d,
+        user_keys: [],
+      });
+      continue;
+    }
+    try {
+      const peerReq = newKeysRequest(req.id, [addr]);
+      peerReq.include_domain_keys = req.include_domain_keys;
+      const peerResp = await deps.forwarder.fetchKeys(d, peerReq);
+      const peerResult = peerResp.results.find((r) => r.address === addr);
+      if (peerResult !== undefined) {
+        results.push(peerResult);
+      } else {
+        results.push({
+          address: addr,
+          status: "not_found",
+          domain: d,
+          user_keys: [],
+        });
+      }
+    } catch (err) {
+      results.push({
+        address: addr,
+        status: "error",
+        domain: d,
+        user_keys: [],
+        error_reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   return encodeResponse(newKeysResponse(req.id, results));
 }

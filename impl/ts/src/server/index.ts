@@ -382,10 +382,14 @@ async function runClientConnection(
 ): Promise<void> {
   deps.logger.info({ peer }, "client connected");
   try {
+    let clientIdentity = "";
+    let clientDeviceKeyId = "";
     const session = await runServer(conn, {
       serverDomainSigningSeed: deps.domainSignPriv,
       domain: deps.domain,
-      supportedSuites: [BASELINE_SUITE],
+      supportedSuites: advertisedSuites(deps.suite) as Array<
+        "x25519-chacha20-poly1305" | "pq-kyber768-x25519"
+      >,
       identityProofSignature: ({ serverEphemeralKey, clientNonce, serverNonce }) =>
         signIdentityProof(
           deps.domainSignPriv,
@@ -393,6 +397,13 @@ async function runClientConnection(
           clientNonce,
           serverNonce,
         ),
+      verifyIdentityProof: ({ block }) => {
+        if (block !== undefined) {
+          clientIdentity = block.client_identity;
+          clientDeviceKeyId = block.client_long_term_key_id;
+        }
+        return { ok: true };
+      },
       permissions: deps.policy.permissions(),
       sessionTTL: deps.policy.sessionTTL(),
       generateSessionId: generateSessionID,
@@ -403,6 +414,7 @@ async function runClientConnection(
         peer,
         session: session.sessionId,
         ttl: session.sessionTTL,
+        identity: clientIdentity,
       },
       "client session established",
     );
@@ -418,12 +430,8 @@ async function runClientConnection(
       domainEncFP: deps.domainEncFP,
       domainEncPriv: deps.domainEncPriv,
       domainEncPub: deps.domainEncPub,
-      // The semp-ts driver does not surface the authenticated client
-      // identity from the encrypted CONFIRM block; the runtime treats
-      // identity-bound features (scope enforcement, fetch routing) as
-      // best-effort when this field is empty.
-      identity: "",
-      deviceKeyId: "",
+      identity: clientIdentity,
+      deviceKeyId: clientDeviceKeyId,
       session,
       logger: deps.logger,
     });
@@ -466,20 +474,16 @@ async function runFederationConnection(
 ): Promise<void> {
   deps.logger.info({ peer }, "federation peer connected");
   try {
-    // The semp-ts FederationResponder fits an "init" → "response" →
-    // "confirm" → "accepted" cycle; we can't easily plumb runServer
-    // for federation. Use it via the handshake.FederationResponder
-    // class. To keep this MVP, we run the same baseline runServer
-    // path (the federation inbound side has the same signature
-    // interface, since both call into the same domain signing key).
-    //
-    // For now we treat federation peers as "trusted for development"
-    // by running the simpler runServer for federation accept;
-    // upgrading to a full federation-handshake path is a follow-up.
+    // Federation accept-side uses the same client-handshake driver
+    // as a stand-in for the full FederationResponder, since both
+    // sides drive the same domain signing key. Switching to the
+    // dedicated federation responder is a follow-up.
     const session = await runServer(conn, {
       serverDomainSigningSeed: deps.domainSignPriv,
       domain: deps.domain,
-      supportedSuites: [BASELINE_SUITE],
+      supportedSuites: advertisedSuites(deps.suite) as Array<
+        "x25519-chacha20-poly1305" | "pq-kyber768-x25519"
+      >,
       identityProofSignature: ({ serverEphemeralKey, clientNonce, serverNonce }) =>
         signIdentityProof(
           deps.domainSignPriv,
