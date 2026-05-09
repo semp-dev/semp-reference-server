@@ -8,12 +8,14 @@ import {
   KeysRequestType,
   newKeysRequest,
   newKeysResponse,
+  sign as ed25519Sign,
   signSignedDoc,
   type KeysRequest,
   type KeysResponse,
   type KeysResponseResult,
   type KeyStoreRecord,
 } from "@sempdev/semp/keys";
+import { marshalWithElision } from "@sempdev/semp/canonical";
 import type { Forwarder } from "@sempdev/semp/delivery";
 
 import { domainOf } from "./helpers.js";
@@ -227,29 +229,50 @@ function signLocalResult(deps: SignDeps, result: KeysResponseResult): void {
   if (deps.domainSignPriv.length === 0) {
     throw new Error("runtime: no domain signing key");
   }
-  // Sign each record. signSignedDoc writes the signature back into a
-  // copy of the JSON; we drop it back into a "signatures" array on
-  // the typed Record.
+  // Per KEY.md §5.1, the per-record signature is computed over the
+  // canonical bytes of the record with the `signatures` and
+  // `revocation` fields elided, then appended to the record's
+  // `signatures` array. signSignedDoc only supports object-property
+  // paths so we do the elide/sign/append by hand here, mirroring
+  // semp-go's keys.SignRecord.
   const signedRecords: KeysResponseResult["user_keys"] = [];
   for (const rec of result.user_keys) {
-    const cloned: Record<string, unknown> = JSON.parse(JSON.stringify(rec));
-    const sig = signSignedDoc({
-      preSignJSON: {
-        ...cloned,
-        signatures: [
-          {
-            signer: deps.localDomain,
-            key_id: deps.domainSignFP,
-            value: "",
-            timestamp: isoNow(),
-          },
-        ],
-      },
-      seed: deps.domainSignPriv,
-      signaturePath: "signatures.0.value",
-      prefix: KeysRecordPrefix,
+    const canonical = marshalWithElision(rec, (clone) => {
+      if (
+        typeof clone === "object" &&
+        clone !== null &&
+        !Array.isArray(clone)
+      ) {
+        const m = clone as Record<string, unknown>;
+        delete m.signatures;
+        delete m.revocation;
+      }
     });
-    signedRecords.push(sig.signedJSON as unknown as KeysResponseResult["user_keys"][number]);
+    const prefix = new TextEncoder().encode(KeysRecordPrefix);
+    const signingInput = new Uint8Array(prefix.length + canonical.length);
+    signingInput.set(prefix, 0);
+    signingInput.set(canonical, prefix.length);
+    const sig = ed25519Sign(deps.domainSignPriv, signingInput);
+    const recordWithSig = JSON.parse(JSON.stringify(rec)) as Record<
+      string,
+      unknown
+    >;
+    const existingSigs = Array.isArray(recordWithSig.signatures)
+      ? (recordWithSig.signatures as Record<string, unknown>[])
+      : [];
+    recordWithSig.signatures = [
+      ...existingSigs,
+      {
+        signer: deps.localDomain,
+        algorithm: "ed25519",
+        key_id: deps.domainSignFP,
+        value: Buffer.from(sig).toString("base64"),
+        timestamp: isoNow(),
+      },
+    ];
+    signedRecords.push(
+      recordWithSig as unknown as KeysResponseResult["user_keys"][number],
+    );
   }
   result.user_keys = signedRecords;
   // Response-level origin signature.

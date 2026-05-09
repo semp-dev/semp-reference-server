@@ -116,7 +116,10 @@ class WSConn implements Transport {
     }
     return new Promise<void>((resolve, reject) => {
       this.ws.send(Buffer.from(message), { binary: false }, (err) => {
-        if (err !== undefined) {
+        // The `ws` library calls back with null on success and an
+        // Error on failure. Earlier code used `err !== undefined`,
+        // which rejected on null too.
+        if (err !== undefined && err !== null) {
           reject(err);
           return;
         }

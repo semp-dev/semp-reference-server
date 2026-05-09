@@ -13,7 +13,12 @@ import { createServer, type Server as HttpServer, type IncomingMessage, type Ser
 
 import { sign as ed25519Sign } from "@sempdev/semp/keys";
 import { Forwarder } from "@sempdev/semp/delivery";
-import { runServer } from "@sempdev/semp/handshake";
+import {
+  FederationResponder,
+  TrustingDomainVerifier,
+  runServer,
+} from "@sempdev/semp/handshake";
+import { Session } from "@sempdev/semp/session";
 import { dialWS, dialH2Session, type Transport } from "@sempdev/semp/transport";
 import type { Logger } from "pino";
 
@@ -474,30 +479,59 @@ async function runFederationConnection(
 ): Promise<void> {
   deps.logger.info({ peer }, "federation peer connected");
   try {
-    // Federation accept-side uses the same client-handshake driver
-    // as a stand-in for the full FederationResponder, since both
-    // sides drive the same domain signing key. Switching to the
-    // dedicated federation responder is a follow-up.
-    const session = await runServer(conn, {
-      serverDomainSigningSeed: deps.domainSignPriv,
-      domain: deps.domain,
-      supportedSuites: advertisedSuites(deps.suite) as Array<
-        "x25519-chacha20-poly1305" | "pq-kyber768-x25519"
-      >,
-      identityProofSignature: ({ serverEphemeralKey, clientNonce, serverNonce }) =>
-        signIdentityProof(
-          deps.domainSignPriv,
-          serverEphemeralKey.key,
-          clientNonce,
-          serverNonce,
-        ),
-      permissions: ["receive"],
+    const responder = new FederationResponder({
+      suite: BASELINE_SUITE,
+      capabilities: {
+        encryption_algorithms: [BASELINE_SUITE],
+        extensions: [],
+      },
+      localDomain: deps.domain,
+      localServerID: deps.domainSignFP,
+      localDomainSeed: deps.domainSignPriv,
+      peerDomainPubLookup: (domain: string) => {
+        const rec = deps.store.lookupDomainKey(domain);
+        if (rec === null) {
+          throw new Error(`federation: unknown peer domain ${domain}`);
+        }
+        return new Uint8Array(Buffer.from(rec.public_key, "base64"));
+      },
+      verifier: new TrustingDomainVerifier(),
+      policy: {
+        message_retention: "30d",
+        user_discovery: "allowed",
+        relay_allowed: false,
+      },
       sessionTTL: 3600,
       generateSessionId: generateSessionID,
     });
+
+    // Drive the four-message federation handshake.
+    const initBytes = await conn.receive();
+    if (initBytes === null) {
+      throw new Error("federation: peer closed before INIT");
+    }
+    const respBytes = await responder.onInit(initBytes);
+    await conn.send(respBytes);
+    const confirmBytes = await conn.receive();
+    if (confirmBytes === null) {
+      throw new Error("federation: peer closed before CONFIRM");
+    }
+    const acceptedBytes = responder.onConfirm(confirmBytes);
+    await conn.send(acceptedBytes);
+
+    const fedSess = responder.session();
+    const session = new Session({
+      role: "server",
+      sessionId: fedSess.sessionId,
+      sessionTTL: fedSess.sessionTTL,
+      establishedAt: new Date(),
+      permissions: ["receive"],
+      keys: fedSess.keys,
+      transport: conn,
+    });
     deps.logger.info(
       {
-        peer,
+        peer: fedSess.peerDomain,
         session: session.sessionId,
         ttl: session.sessionTTL,
       },
@@ -521,10 +555,11 @@ async function runFederationConnection(
     deps.logger.info({ peer }, "federation peer disconnected");
   } catch (err) {
     deps.metrics.federationFailure.inc();
-    deps.logger.error(
-      { peer, err: err instanceof Error ? err.message : String(err) },
-      "federation handshake failed",
-    );
+    const detail =
+      err instanceof Error
+        ? `${err.message}\n${err.stack ?? ""}`
+        : `non-Error thrown: ${typeof err} ${JSON.stringify(err)}`;
+    deps.logger.error({ peer, detail }, "federation handshake failed");
   } finally {
     try {
       await conn.close();
