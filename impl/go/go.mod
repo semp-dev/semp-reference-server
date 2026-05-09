@@ -7,7 +7,7 @@ require (
 	github.com/coder/websocket v1.8.14
 	golang.org/x/crypto v0.50.0
 	modernc.org/sqlite v1.48.2
-	semp.dev/semp-go v0.5.0
+	semp.dev/semp-go v0.5.1
 )
 
 require (
