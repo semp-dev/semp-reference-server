@@ -150,11 +150,11 @@ func lookupLocalKeys(ctx context.Context, store keys.Store, address string, incl
 		result.ErrorReason = err.Error()
 		return result
 	}
-	if len(userKeys) == 0 {
-		return result
-	}
-	result.UserKeys = userKeys
-	result.Status = keys.StatusFound
+	// Domain-key inclusion is independent of the user lookup outcome.
+	// `include_domain_keys: true` means "give me the domain keys",
+	// regardless of whether the address resolves to a user. Receivers
+	// use this to refresh a stale sender-domain key when an envelope
+	// from <unknown_user>@domain rotates the domain identity.
 	if includeDomain {
 		if domRec, err := store.LookupDomainKey(ctx, domain); err == nil && domRec != nil {
 			result.DomainKey = domRec
@@ -165,6 +165,11 @@ func lookupLocalKeys(ctx context.Context, store keys.Store, address string, incl
 			}
 		}
 	}
+	if len(userKeys) == 0 {
+		return result
+	}
+	result.UserKeys = userKeys
+	result.Status = keys.StatusFound
 	return result
 }
 

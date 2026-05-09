@@ -169,11 +169,11 @@ function lookupLocalKeys(
     result.error_reason = err instanceof Error ? err.message : String(err);
     return result;
   }
-  if (userKeys.length === 0) {
-    return result;
-  }
-  result.user_keys = userKeys.map((rec) => keyStoreToRecord(rec));
-  result.status = "found";
+  // Domain-key inclusion is independent of the user lookup outcome.
+  // `include_domain_keys: true` means "give me the domain keys",
+  // regardless of whether the address resolves to a user. Receivers
+  // use this to refresh a stale sender-domain key when an envelope
+  // from <unknown_user>@domain rotates the domain identity.
   if (includeDomain) {
     const domRec = store.lookupDomainKey(domain);
     if (domRec !== null) {
@@ -184,6 +184,11 @@ function lookupLocalKeys(
       result.domain_enc_key = keyStoreToRecord(encRec);
     }
   }
+  if (userKeys.length === 0) {
+    return result;
+  }
+  result.user_keys = userKeys.map((rec) => keyStoreToRecord(rec));
+  result.status = "found";
   return result;
 }
 
