@@ -3,20 +3,25 @@
 # Portainer pulls this file from the semp-reference-server repo and builds
 # the SEMP container in-place.
 #
-# Required environment variables (set in the Portainer Stack's "Environment
-# variables" section):
+# Required environment variables (set in the Portainer Stack's
+# "Environment variables" section):
 #
-#   SEMP_HOST  — the public hostname Caddy will obtain a Let's Encrypt cert
-#                for (e.g. semp.example.com)
+#   SEMP_HOST  the public hostname Caddy will obtain a Let's Encrypt
+#              cert for (e.g. semp.example.com)
 #
-# Before deploying, edit deploy/semp.toml in the repo to set the email
-# domain and provision users.
+# Optional environment variable:
+#
+#   SEMP_IMPL  "go" or "ts" (default: "go"). Selects which impl the
+#              upstream `semp` service builds from.
+#
+# Before deploying, edit shared/deploy/semp.toml in the repo to set
+# the email domain and provision users.
 
 services:
   semp:
     build:
-      context: ..
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/${SEMP_IMPL:-go}.Dockerfile
     restart: unless-stopped
     volumes:
       - semp-data:/var/lib/semp

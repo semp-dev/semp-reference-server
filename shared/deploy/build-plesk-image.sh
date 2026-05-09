@@ -4,10 +4,10 @@
 #
 # Run on a developer machine that has Docker (with buildx). Output:
 #
-#   deploy/dist/semp-server-plesk.tar
+#   shared/deploy/dist/semp-server-plesk.tar
 #
 # The output tar is a classic single-platform docker save archive
-# (linux/amd64, no provenance/sbom attestations) — the same shape
+# (linux/amd64, no provenance/sbom attestations); the same shape
 # Plesk's File Manager already swallows for other Docker image
 # uploads.
 #
@@ -19,18 +19,20 @@ set -euo pipefail
 err() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '>>> %s\n' "$*"; }
 
-cd "$(dirname "$0")/.."
-REPO_ROOT="$(pwd)"
-DIST_DIR="${REPO_ROOT}/deploy/dist"
+# Resolve the repo root from this script's location.
+# shared/deploy/build-plesk-image.sh is two levels deep.
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DEPLOY_DIR="${REPO_ROOT}/shared/deploy"
+DIST_DIR="${DEPLOY_DIR}/dist"
 TARBALL="${DIST_DIR}/semp-server-plesk.tar"
-DOCKERFILE="${REPO_ROOT}/deploy/Dockerfile.plesk"
+DOCKERFILE="${DEPLOY_DIR}/Dockerfile.plesk"
 
 command -v docker >/dev/null 2>&1 || err "docker is required"
 docker buildx version >/dev/null 2>&1 || err "docker buildx is required"
 [[ -f "${DOCKERFILE}" ]] || err "${DOCKERFILE} not found"
 
-GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unversioned)"
-if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+GIT_SHA="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unversioned)"
+if ! git -C "${REPO_ROOT}" diff-index --quiet HEAD -- 2>/dev/null; then
     GIT_SHA="${GIT_SHA}-dirty"
 fi
 VERSION="plesk-${GIT_SHA}"
@@ -71,11 +73,11 @@ Then on the Plesk host:
   sudo docker cp semp-bootstrap:/usr/share/semp/. /opt/semp/
   sudo docker rm semp-bootstrap
 
-  # 3. First run — scaffolds /opt/semp/config/semp.toml and exits.
+  # 3. First run: scaffolds /opt/semp/config/semp.toml and exits.
   #    Edit that file to set 'domain' and add [[users]] entries.
   sudo /opt/semp/install.sh
 
-  # 4. Second run — starts the container and prints the Plesk UI steps.
+  # 4. Second run: starts the container and prints the Plesk UI steps.
   sudo /opt/semp/install.sh
 ==========================================================================
 EOF

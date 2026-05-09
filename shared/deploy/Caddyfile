@@ -1,5 +1,5 @@
 {$SEMP_HOST:example.com} {
-	# WebSocket endpoints — proxy with upgrade support
+	# WebSocket endpoints ; proxy with upgrade support
 	@websocket {
 		path /v1/ws /v1/federate
 	}

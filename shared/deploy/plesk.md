@@ -2,6 +2,8 @@
 
 Plesk Obsidian can run the SEMP reference server through its **Docker** extension, with Plesk's nginx in front for TLS and routing. Unlike Dokploy or Coolify, you must add nginx directives manually for WebSocket support.
 
+The Plesk path uses the **Go impl** only. The pure-Go SQLite driver lets the image stay tiny and CGO-free, which matters when you're loading a `docker save` tar through Plesk's File Manager. A TS-on-Plesk variant would need a parallel build script and a larger image; if you want it, open an issue.
+
 ## Prerequisites
 
 * Plesk Obsidian with the **Docker** extension installed
@@ -13,17 +15,17 @@ Plesk Obsidian can run the SEMP reference server through its **Docker** extensio
 
 Build a Docker image on your local machine with the operator helpers (installer, nginx directives, config template, README) baked into `/usr/share/semp/`, export it via `docker save` to a single `.tar`, upload that, and the rest is `docker load` + `docker cp` + run the installer. No second artifact, no git or Go on the Plesk host.
 
-The image is built with `docker buildx --platform linux/amd64 --provenance=false --sbom=false`, which produces a classic single-platform `docker save` archive — the same shape Plesk's File Manager already swallows for any other Docker image upload.
+The image is built with `docker buildx --platform linux/amd64 --provenance=false --sbom=false`, which produces a classic single-platform `docker save` archive; the same shape Plesk's File Manager already swallows for any other Docker image upload.
 
 ### On your local machine
 
 ```sh
 git clone https://github.com/semp-dev/semp-reference-server
 cd semp-reference-server
-./deploy/build-plesk-image.sh
+./shared/deploy/build-plesk-image.sh
 ```
 
-Output: `deploy/dist/semp-server-plesk.tar` (about 9 MB).
+Output: `shared/deploy/dist/semp-server-plesk.tar` (about 30 MB).
 
 ### On the Plesk host
 
@@ -39,12 +41,12 @@ sudo docker create --name semp-bootstrap semp-server:latest
 sudo docker cp semp-bootstrap:/usr/share/semp/. /opt/semp/
 sudo docker rm semp-bootstrap
 
-# 3. First install run — scaffolds /opt/semp/config/semp.toml, exits
+# 3. First install run; scaffolds /opt/semp/config/semp.toml, exits
 sudo /opt/semp/install.sh
 
 # Edit /opt/semp/config/semp.toml: set 'domain' and add [[users]]
 
-# 4. Second run — starts the container and prints Plesk UI steps
+# 4. Second run; starts the container and prints Plesk UI steps
 sudo /opt/semp/install.sh
 ```
 
@@ -61,10 +63,10 @@ SSH in and build the image on the server:
 ```sh
 git clone https://github.com/semp-dev/semp-reference-server /opt/semp
 cd /opt/semp
-docker build -t semp-server:latest .
+docker build -f docker/go.Dockerfile -t semp-server:latest .
 
 mkdir -p /opt/semp/data /opt/semp/config
-cp deploy/semp.toml /opt/semp/config/semp.toml
+cp shared/deploy/semp.toml /opt/semp/config/semp.toml
 ```
 
 Edit `/opt/semp/config/semp.toml`:
@@ -193,7 +195,7 @@ Expect `101 Switching Protocols`. If you get `502` or a stripped `Connection: cl
 ## Notes
 
 * **Plesk may overwrite custom nginx directives** if you change other domain settings. Keep a copy of the directive block.
-* **Coexistence** — the SEMP server takes the entire domain because the `location /` block proxies everything to the container. Use a dedicated subdomain rather than mixing it with a Plesk-managed website.
+* **Coexistence**: the SEMP server takes the entire domain because the `location /` block proxies everything to the container. Use a dedicated subdomain rather than mixing it with a Plesk-managed website.
 * **HTTP/2 transport** (`/v1/h2`) works through the same `location /` proxy because the upstream connection runs over plain HTTP/1.1 framing for the persistent stream; clients that prefer the WS transport can ignore the H2 path.
 * **QUIC/HTTP3** is not supported through Plesk's nginx without significant manual configuration. Stick to TCP transports.
-* **Container logs** — `docker logs -f semp-server` from SSH, or **Docker** > **Logs** in the Plesk UI.
+* **Container logs**: `docker logs -f semp-server` from SSH, or **Docker** > **Logs** in the Plesk UI.

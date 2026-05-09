@@ -1,46 +1,52 @@
-# Plesk-specific image. Identical to the base Dockerfile except that the
-# Plesk operator helpers (install.sh, plesk-nginx.conf, README, config
-# template) are baked into /usr/share/semp/ at build time. After loading
-# the saved tar on the Plesk host, copy the helpers out with:
+# syntax=docker/dockerfile:1
+#
+# Plesk-specific image. Identical to docker/go.Dockerfile except that
+# the Plesk operator helpers (install.sh, plesk-nginx.conf, README,
+# config template) are baked into /usr/share/semp/ at build time.
+# After loading the saved tar on the Plesk host, copy the helpers out
+# with:
 #
 #   docker create --name semp-bootstrap semp-server:latest
 #   docker cp semp-bootstrap:/usr/share/semp/. /opt/semp/
 #   docker rm semp-bootstrap
 #
-# Built via deploy/build-plesk-image.sh, which uses buildx with
-# --provenance=false --sbom=false --platform linux/amd64 so the docker
-# save output is a classic single-platform image archive that uploads
-# cleanly through Plesk's File Manager.
+# Built via shared/deploy/build-plesk-image.sh, which uses buildx with
+# --provenance=false --sbom=false --platform linux/amd64 so the
+# `docker save` output is a classic single-platform image archive that
+# uploads cleanly through Plesk's File Manager.
+#
+# Plesk currently uses the Go impl. The pure-Go SQLite driver
+# (modernc.org/sqlite) means no CGO and no native-build tooling is
+# needed in the image. A TS-on-Plesk variant is a follow-up.
+#
+# Build context is the repo root.
 
 FROM golang:1.26-alpine AS build
-
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /semp-server ./cmd/semp-server/
+COPY impl/go/go.mod impl/go/go.sum ./impl/go/
+RUN cd impl/go && go mod download
+COPY impl/go ./impl/go
+COPY shared ./shared
+RUN cd impl/go && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /semp-server ./cmd/semp-server
 
 FROM alpine:3.21
-
 RUN apk add --no-cache ca-certificates tzdata \
-    && addgroup -S semp && adduser -S semp -G semp
+ && addgroup -S semp && adduser -S semp -G semp \
+ && mkdir -p /etc/semp /var/lib/semp \
+ && chown -R semp:semp /etc/semp /var/lib/semp
 
 COPY --from=build /semp-server /usr/local/bin/semp-server
 
 # Plesk operator helpers, extractable on the host via docker cp.
-COPY deploy/plesk-bundle/install.sh        /usr/share/semp/install.sh
-COPY deploy/plesk-bundle/plesk-nginx.conf  /usr/share/semp/plesk-nginx.conf
-COPY deploy/plesk-bundle/README.md         /usr/share/semp/README.md
-COPY deploy/semp.toml                      /usr/share/semp/semp.toml.example
+COPY shared/deploy/plesk-bundle/install.sh        /usr/share/semp/install.sh
+COPY shared/deploy/plesk-bundle/plesk-nginx.conf  /usr/share/semp/plesk-nginx.conf
+COPY shared/deploy/plesk-bundle/README.md         /usr/share/semp/README.md
+COPY shared/deploy/semp.toml                      /usr/share/semp/semp.toml.example
 
 RUN chmod +x /usr/share/semp/install.sh
 
-RUN mkdir -p /etc/semp /var/lib/semp \
-    && chown -R semp:semp /etc/semp /var/lib/semp
-
-WORKDIR /var/lib/semp
 USER semp
-
+WORKDIR /var/lib/semp
 EXPOSE 8443
 VOLUME ["/var/lib/semp"]
 

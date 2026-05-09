@@ -1,14 +1,42 @@
+# Minimal one-server deployment for an upstream reverse proxy
+# (Dokploy / Coolify / Plesk / your own Traefik). The reverse proxy
+# terminates TLS; this container speaks plain HTTP on 8443 inside its
+# Docker network.
+#
+# Pick the impl via COMPOSE_PROFILES:
+#
+#   COMPOSE_PROFILES=go docker compose -f shared/deploy/docker-compose.yml up -d
+#   COMPOSE_PROFILES=ts docker compose -f shared/deploy/docker-compose.yml up -d
+#
+# Both services bind the same internal port and read from the same
+# `shared/deploy/semp.toml` so the operator picks one impl per
+# deployment.
+
 services:
-  semp:
+  semp-go:
+    profiles: ["go"]
     build:
-      context: ..
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/go.Dockerfile
     restart: unless-stopped
     expose:
       - "8443"
     volumes:
-      - semp-data:/var/lib/semp
+      - semp-go-data:/var/lib/semp
+      - ./semp.toml:/etc/semp/semp.toml:ro
+
+  semp-ts:
+    profiles: ["ts"]
+    build:
+      context: ../..
+      dockerfile: docker/ts.Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8443"
+    volumes:
+      - semp-ts-data:/var/lib/semp
       - ./semp.toml:/etc/semp/semp.toml:ro
 
 volumes:
-  semp-data:
+  semp-go-data:
+  semp-ts-data:

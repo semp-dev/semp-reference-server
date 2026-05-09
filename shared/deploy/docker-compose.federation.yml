@@ -1,0 +1,85 @@
+# Two-server federation pair for cross-impl interop testing.
+#
+# Stands up one Go server on domain-a.local and one TS server on
+# domain-b.local, on the same Docker network. The pair exercises every
+# code path that matters for cross-impl wire compatibility: handshake,
+# envelope submission, federation forward, SEMP_KEYS lookup, rekey.
+#
+# Bring up:
+#
+#   docker compose -f shared/deploy/docker-compose.federation.yml up -d --build
+#
+# Run a quick interop check from outside the network:
+#
+#   docker compose -f shared/deploy/docker-compose.federation.yml \
+#       run --rm interop
+#
+# The `interop` service is a Go reference client that registers a user
+# on each server and sends a cross-domain envelope between them.
+#
+# Configuration files in this same directory:
+#
+#   semp-domain-a.toml   Go server's config (domain-a.local, port 8443)
+#   semp-domain-b.toml   TS server's config (domain-b.local, port 8443)
+#
+# Customize them (or generate fresh fixtures) before bringing the stack
+# up. Both files are mounted read-only into their respective containers.
+#
+# Note: this stack does NOT terminate TLS. The two servers speak plain
+# HTTP/WS to each other on the internal Docker network. For production-
+# shaped TLS testing, use docker-compose.portainer.yml instead.
+
+services:
+  semp-go:
+    build:
+      context: ../..
+      dockerfile: docker/go.Dockerfile
+    hostname: domain-a.local
+    networks:
+      semp-net:
+        aliases:
+          - domain-a.local
+    volumes:
+      - semp-go-data:/var/lib/semp
+      - ./semp-domain-a.toml:/etc/semp/semp.toml:ro
+
+  semp-ts:
+    build:
+      context: ../..
+      dockerfile: docker/ts.Dockerfile
+    hostname: domain-b.local
+    networks:
+      semp-net:
+        aliases:
+          - domain-b.local
+    volumes:
+      - semp-ts-data:/var/lib/semp
+      - ./semp-domain-b.toml:/etc/semp/semp.toml:ro
+
+  # On-demand client used to drive an interop smoke test. Not started by
+  # default. Run with: `docker compose run --rm interop`.
+  interop:
+    image: semp-reference-client:go
+    profiles: ["interop"]
+    build:
+      context: ../../../semp-reference-client
+      dockerfile: docker/go.Dockerfile
+    networks:
+      - semp-net
+    depends_on:
+      - semp-go
+      - semp-ts
+    entrypoint: ["sh", "-c"]
+    command: |
+      "echo 'Run register/send/fetch flows manually:' &&
+       echo '  /usr/local/bin/semp-client -config <toml> register --password <pw>' &&
+       echo '  /usr/local/bin/semp-client -config <toml> send --to <addr>' &&
+       echo '' &&
+       echo 'See shared/scripts/test-cross-impl.sh for an automated runner.'"
+
+networks:
+  semp-net:
+
+volumes:
+  semp-go-data:
+  semp-ts-data:

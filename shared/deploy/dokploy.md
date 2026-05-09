@@ -8,6 +8,10 @@
 * DNS A/AAAA record pointing your hostname (e.g. `semp.example.com`) at the VPS
 * DNS SRV/TXT records for the email domain (see the main README's "DNS Records" section)
 
+## Pick an implementation
+
+This guide deploys ONE impl per stack. Both Go and TS are wire-compatible; pick one. See [`README.md`](README.md) for the comparison table. The compose snippet below uses an `IMPL` build arg; switch by changing that one line.
+
 ## Steps
 
 ### 1. Create the application
@@ -17,17 +21,18 @@ In the Dokploy UI:
 * Click **Create Service** > **Compose**
 * Repository: `https://github.com/semp-dev/semp-reference-server`
 * Branch: `master`
-* Compose path: `deploy/docker-compose.yml`
+* Compose path: `shared/deploy/docker-compose.yml`
 
-### 2. Set the SEMP_HOST environment variable
+### 2. Set required environment variables
 
 In the Dokploy service's **Environment** tab, add:
 
 ```
 SEMP_HOST=semp.example.com
+SEMP_IMPL=go
 ```
 
-Use your actual hostname. The compose file in the next step substitutes this value into the Traefik router rule, so a missing or wrong value here is the most common cause of a 404 from Traefik.
+`SEMP_HOST` controls Traefik routing. `SEMP_IMPL` is `go` or `ts`; pick one.
 
 ### 3. Override the compose file
 
@@ -37,8 +42,8 @@ Replace the rendered compose with:
 services:
   semp:
     build:
-      context: ..
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/${SEMP_IMPL:-go}.Dockerfile
     restart: unless-stopped
     volumes:
       - semp-data:/var/lib/semp
@@ -60,11 +65,11 @@ volumes:
   semp-data:
 ```
 
-The `${SEMP_HOST:?...}` syntax fails the deploy with a clear error if the env var is unset, instead of silently routing nowhere.
+The `${SEMP_HOST:?...}` syntax fails the deploy with a clear error if the env var is unset, instead of silently routing nowhere. The `${SEMP_IMPL:-go}` default falls back to the Go impl when unset.
 
 ### 4. Configure semp.toml
 
-Edit `deploy/semp.toml` (Dokploy will mount it into the container):
+Edit `shared/deploy/semp.toml` (Dokploy will mount it into the container):
 
 ```toml
 domain = "example.com"
@@ -117,8 +122,14 @@ curl -i \
 
 Expect `101 Switching Protocols`. The handshake will then fail (this is just a curl request, not a SEMP client), but `101` confirms the WebSocket plumbing works end to end.
 
+## Switching impls
+
+Change `SEMP_IMPL` in the Environment tab and redeploy. The container is rebuilt from the other Dockerfile against the same `semp-data` volume; the SQL schema is identical between impls so existing data persists.
+
+For staging-vs-production interop testing, deploy two stacks under different hostnames (one with `SEMP_IMPL=go`, one with `SEMP_IMPL=ts`) and federate them via `[[federation.peers]]` in each `semp.toml`.
+
 ## Notes
 
-* **QUIC/HTTP3** is not covered here. Traefik can route UDP, but it requires a UDP entrypoint and the certificate mounted into the container, which sits outside Dokploy's UI workflow. Most operators run TCP-only.
+* **QUIC/HTTP3** works only with the Go impl, and even then it is not covered here. Traefik can route UDP, but it requires a UDP entrypoint and the certificate mounted into the container, which sits outside Dokploy's UI workflow. Most operators run TCP-only.
 * **Updates** redeploy from the same branch. SQLite data and domain keys persist in the `semp-data` volume.
 * **Backup** the volume by running `docker run --rm -v semp-data:/data -v $(pwd):/backup alpine tar czf /backup/semp-backup.tgz /data` on the host.

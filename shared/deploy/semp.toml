@@ -1,4 +1,4 @@
-# SEMP Reference Server — production deployment config.
+# SEMP Reference Server ; production deployment config.
 # Replace "example.com" with your actual domain.
 
 domain = "example.com"

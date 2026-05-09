@@ -1,13 +1,13 @@
-# SEMP Reference Server — Plesk Operator Helpers
+# SEMP Reference Server ; Plesk Operator Helpers
 
-These files are extracted from the `semp-server:latest` Docker image after `docker load`. You're reading this on a Plesk host because `docker cp` pulled `/usr/share/semp/` out of the image into the directory containing this README — typically `/opt/semp/`.
+These files are extracted from the `semp-server:latest` Docker image after `docker load`. You're reading this on a Plesk host because `docker cp` pulled `/usr/share/semp/` out of the image into the directory containing this README ; typically `/opt/semp/`.
 
 Contents:
 
-- `install.sh` — idempotent installer that runs the container with the right port mapping and volumes
-- `plesk-nginx.conf` — additional nginx directives for the SEMP domain
-- `semp.toml.example` — config template
-- `README.md` — this file
+- `install.sh` ; idempotent installer that runs the container with the right port mapping and volumes
+- `plesk-nginx.conf` ; additional nginx directives for the SEMP domain
+- `semp.toml.example` ; config template
+- `README.md` ; this file
 
 ## What's already done
 
@@ -27,8 +27,8 @@ sudo ./install.sh
 
 The first run copies `semp.toml.example` to `/opt/semp/config/semp.toml` and exits. Edit that file:
 
-- `domain` — your email domain (e.g. `example.com`)
-- `[[users]]` — one entry per user with address and password
+- `domain` ; your email domain (e.g. `example.com`)
+- `[[users]]` ; one entry per user with address and password
 
 ### 2. Second install run (starts container)
 
@@ -75,7 +75,7 @@ Expect `101 Switching Protocols`.
 On the developer machine, rebuild and re-export:
 
 ```sh
-./deploy/build-plesk-image.sh
+./shared/deploy/build-plesk-image.sh
 ```
 
 Upload the new `semp-server-plesk.tar` to the Plesk host, then:
@@ -88,7 +88,7 @@ sudo docker rm semp-bootstrap
 sudo /opt/semp/install.sh
 ```
 
-The installer stops the old container, starts the new one against the same `/opt/semp/config/semp.toml` and `/opt/semp/data` volumes — config and data persist.
+The installer stops the old container, starts the new one against the same `/opt/semp/config/semp.toml` and `/opt/semp/data` volumes ; config and data persist.
 
 ## Logs
 
