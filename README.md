@@ -51,6 +51,27 @@ Each implementation reads the same TOML config shape (`shared/config/`), the sam
 
 QUIC (`tls.quic_addr`) is supported by `impl/go` only; `impl/ts` falls back to HTTP/2 + WS, which TRANSPORT.md §4 makes the mandatory baseline.
 
+## Cross-language interop verified
+
+The Go and TS server implementations are wire-compatible. Tested locally end-to-end (not yet in CI) with this matrix:
+
+| Scenario | Verdict |
+|---|---|
+| Go server accepts Go client (same-impl) | ✅ |
+| TS server accepts TS client (same-impl) | ✅ |
+| Go server accepts TS client | ✅ |
+| TS server accepts Go client | ✅ |
+| Go server federates to TS server | ✅ (alice@a.local sends to bob@b.local; envelope forwarded; bob's enclosure decrypts and `sender_signature` verifies on Go reader) |
+| TS server federates to Go server | ✅ (bob@b.local sends to alice@a.local; reverse direction passes the same shape) |
+
+**Versions** (the four pieces that have to agree byte-for-byte): `semp-go v0.5.1`, `semp-ts v0.5.2`, `semp-reference-server` (this repo) `master`, `semp-reference-client` `master`. Each impl reads the same TOML, the same SQLite schema, and the same cross-language test vectors at `semp-spec/vectors/v1.0.0/`.
+
+**Reproduce** the Go+TS federation pair locally:
+
+    docker compose -f shared/deploy/docker-compose.federation.yml up -d --build
+
+`semp-go` runs on `domain-a.local`, `semp-ts` on `domain-b.local`. Use either `semp-reference-client` impl to register users on each side and send across the pair.
+
 ## Operator deployment
 
 `shared/deploy/` carries runtime-agnostic recipes for Dokploy, Coolify, Portainer (Traefik / Caddy reverse proxy configs), and Plesk. Each recipe points at `docker/docker-compose.yml` and selects the impl via `COMPOSE_PROFILES=go` or `COMPOSE_PROFILES=ts`.
