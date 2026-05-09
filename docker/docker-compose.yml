@@ -1,0 +1,35 @@
+# Pick the impl via COMPOSE_PROFILES:
+#
+#   COMPOSE_PROFILES=go docker compose -f docker/docker-compose.yml up -d
+#   COMPOSE_PROFILES=ts docker compose -f docker/docker-compose.yml up -d
+#
+# Both services bind to the same host port (8443); only one profile
+# runs at a time. Drop a fixtures/semp.toml under docker/ before
+# bringing the stack up.
+
+services:
+  semp-server-go:
+    profiles: ["go"]
+    build:
+      context: ..
+      dockerfile: docker/go.Dockerfile
+    restart: unless-stopped
+    ports: ["8443:8443"]
+    volumes:
+      - ./fixtures/semp.toml:/etc/semp/semp.toml:ro
+      - server-go-data:/var/lib/semp
+
+  semp-server-ts:
+    profiles: ["ts"]
+    build:
+      context: ..
+      dockerfile: docker/ts.Dockerfile
+    restart: unless-stopped
+    ports: ["8443:8443"]
+    volumes:
+      - ./fixtures/semp.toml:/etc/semp/semp.toml:ro
+      - server-ts-data:/var/lib/semp
+
+volumes:
+  server-go-data:
+  server-ts-data:
