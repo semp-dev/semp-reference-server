@@ -1,0 +1,473 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
+	"semp.dev/semp-go/keys"
+)
+
+// DomainKeyFetcher is called when LookupDomainKey has a cache miss.
+// It should fetch the domain signing public key from the peer's
+// well-known endpoint over HTTPS. Returns nil if the key cannot be fetched.
+type DomainKeyFetcher func(domain string) []byte
+
+// SQLiteStore implements keys.Store and inboxd.SharedStore backed by SQLite.
+type SQLiteStore struct {
+	db               *sql.DB
+	domainKeyFetcher DomainKeyFetcher
+	localDomain      string
+	masterKey        string // if set, private keys are encrypted at rest
+}
+
+// NewSQLiteStore wraps an initialised database.
+func NewSQLiteStore(db *sql.DB) *SQLiteStore {
+	return &SQLiteStore{db: db}
+}
+
+// SetMasterKey enables encrypted-at-rest private key storage using
+// AES-256-GCM with Argon2id key derivation.
+func (s *SQLiteStore) SetMasterKey(key string) {
+	s.masterKey = key
+}
+
+// encryptIfNeeded encrypts private key bytes if a master key is configured.
+// keyID is used as AAD to bind the ciphertext to its storage slot.
+func (s *SQLiteStore) encryptIfNeeded(priv []byte, keyID string) (ciphertext, salt, nonce []byte, err error) {
+	if s.masterKey == "" || priv == nil {
+		return priv, nil, nil, nil
+	}
+	return EncryptPrivateKey(s.masterKey, priv, []byte(keyID))
+}
+
+// decryptIfNeeded decrypts private key bytes if salt and nonce are present.
+// keyID is used as AAD to verify the ciphertext is for the correct key.
+func (s *SQLiteStore) decryptIfNeeded(data, salt, nonce []byte, keyID string) ([]byte, error) {
+	if salt == nil || nonce == nil || s.masterKey == "" {
+		return data, nil // unencrypted (legacy or no master key)
+	}
+	return DecryptPrivateKey(s.masterKey, data, salt, nonce, []byte(keyID))
+}
+
+// SetDomainKeyFetcher sets the callback for auto-fetching domain keys on cache miss.
+func (s *SQLiteStore) SetDomainKeyFetcher(localDomain string, f DomainKeyFetcher) {
+	s.localDomain = localDomain
+	s.domainKeyFetcher = f
+}
+
+// LookupDomainKey returns the current signing key for domain. If the key is
+// not in the local database and a DomainKeyFetcher is configured, it fetches
+// the key from the peer's well-known endpoint, caches it, and returns it.
+func (s *SQLiteStore) LookupDomainKey(ctx context.Context, domain string) (*keys.Record, error) {
+	rec, err := s.lookupDomainKeyLocal(ctx, domain)
+	if rec != nil || err != nil {
+		return rec, err
+	}
+	// Cache miss — try auto-fetch for remote domains only.
+	if s.domainKeyFetcher == nil || domain == s.localDomain {
+		return nil, nil
+	}
+	pub := s.domainKeyFetcher(domain)
+	if pub == nil {
+		return nil, nil
+	}
+	fp := s.PutDomainKey(domain, pub)
+	now := time.Now().UTC()
+	return &keys.Record{
+		Type:      keys.TypeDomain,
+		Algorithm: "ed25519",
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		KeyID:     fp,
+		Created:   now,
+		Expires:   now.Add(365 * 24 * time.Hour),
+	}, nil
+}
+
+// lookupDomainKeyLocal queries the local database only.
+func (s *SQLiteStore) lookupDomainKeyLocal(ctx context.Context, domain string) (*keys.Record, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT algorithm, public_key, key_id, created_at, expires_at,
+		        revoked_at, revocation_reason, replacement_key_id
+		   FROM domain_keys
+		  WHERE domain = ? AND key_type = 'signing'`,
+		domain)
+	return scanDomainRow(row, domain)
+}
+
+// LookupDomainEncryptionKeyCtx returns the domain encryption key.
+func (s *SQLiteStore) LookupDomainEncryptionKeyCtx(ctx context.Context, domain string) (*keys.Record, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT algorithm, public_key, key_id, created_at, expires_at,
+		        revoked_at, revocation_reason, replacement_key_id
+		   FROM domain_keys
+		  WHERE domain = ? AND key_type = 'encryption'`,
+		domain)
+	return scanDomainRow(row, domain)
+}
+
+// LookupDomainEncryptionKey satisfies the inboxd domainEncKeyLookup interface
+// so the SEMP_KEYS handler includes the domain encryption key in responses.
+func (s *SQLiteStore) LookupDomainEncryptionKey(domain string) *keys.Record {
+	rec, _ := s.LookupDomainEncryptionKeyCtx(context.Background(), domain)
+	return rec
+}
+
+func scanDomainRow(row *sql.Row, domain string) (*keys.Record, error) {
+	var (
+		algorithm, keyID, createdStr, expiresStr string
+		pubBytes                                 []byte
+		revokedAt, revokeReason, replacementID   sql.NullString
+	)
+	err := row.Scan(&algorithm, &pubBytes, &keyID, &createdStr, &expiresStr,
+		&revokedAt, &revokeReason, &replacementID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	created, _ := time.Parse(time.RFC3339, createdStr)
+	expires, _ := time.Parse(time.RFC3339, expiresStr)
+	rec := &keys.Record{
+		Type:      keys.TypeDomain,
+		Algorithm: algorithm,
+		PublicKey: base64.StdEncoding.EncodeToString(pubBytes),
+		KeyID:     keys.Fingerprint(keyID),
+		Created:   created,
+		Expires:   expires,
+	}
+	if revokedAt.Valid {
+		revAt, _ := time.Parse(time.RFC3339, revokedAt.String)
+		rec.Revocation = &keys.Revocation{
+			Reason:           keys.Reason(revokeReason.String),
+			RevokedAt:        revAt,
+			ReplacementKeyID: keys.Fingerprint(replacementID.String),
+		}
+	}
+	return rec, nil
+}
+
+// LookupUserKeys returns all current key records for address.
+func (s *SQLiteStore) LookupUserKeys(ctx context.Context, address string, types ...keys.Type) ([]*keys.Record, error) {
+	query := `SELECT key_type, algorithm, public_key, key_id, created_at, expires_at,
+	                 revoked_at, revocation_reason, replacement_key_id
+	            FROM user_keys WHERE address = ?`
+	args := []any{address}
+	if len(types) > 0 {
+		placeholders := ""
+		for i, t := range types {
+			if i > 0 {
+				placeholders += ","
+			}
+			placeholders += "?"
+			args = append(args, string(t))
+		}
+		query += " AND key_type IN (" + placeholders + ")"
+	}
+	query += " AND revoked_at IS NULL"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []*keys.Record
+	for rows.Next() {
+		var (
+			keyType, algorithm, keyID, createdStr, expiresStr string
+			pubBytes                                          []byte
+			revokedAt, revokeReason, replacementID            sql.NullString
+		)
+		if err := rows.Scan(&keyType, &algorithm, &pubBytes, &keyID,
+			&createdStr, &expiresStr, &revokedAt, &revokeReason, &replacementID); err != nil {
+			return nil, err
+		}
+		created, _ := time.Parse(time.RFC3339, createdStr)
+		expires, _ := time.Parse(time.RFC3339, expiresStr)
+		rec := &keys.Record{
+			Address:   address,
+			Type:      keys.Type(keyType),
+			Algorithm: algorithm,
+			PublicKey: base64.StdEncoding.EncodeToString(pubBytes),
+			KeyID:     keys.Fingerprint(keyID),
+			Created:   created,
+			Expires:   expires,
+		}
+		if revokedAt.Valid {
+			revAt, _ := time.Parse(time.RFC3339, revokedAt.String)
+			rec.Revocation = &keys.Revocation{
+				Reason:           keys.Reason(revokeReason.String),
+				RevokedAt:        revAt,
+				ReplacementKeyID: keys.Fingerprint(replacementID.String),
+			}
+		}
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
+// PutRecord persists a user key record.
+func (s *SQLiteStore) PutRecord(ctx context.Context, rec *keys.Record) error {
+	if rec.Type == keys.TypeDomain {
+		return nil // domain keys managed separately
+	}
+	pubBytes, err := base64.StdEncoding.DecodeString(rec.PublicKey)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO user_keys
+		 (address, key_type, algorithm, public_key, key_id, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rec.Address, string(rec.Type), rec.Algorithm, pubBytes,
+		string(rec.KeyID), rec.Created.Format(time.RFC3339), rec.Expires.Format(time.RFC3339))
+	return err
+}
+
+// PutRevocation records a key revocation.
+func (s *SQLiteStore) PutRevocation(ctx context.Context, keyID keys.Fingerprint, rev *keys.Revocation) error {
+	revokedAt := rev.RevokedAt.Format(time.RFC3339)
+	reason := string(rev.Reason)
+	replacement := string(rev.ReplacementKeyID)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE user_keys SET revoked_at = ?, revocation_reason = ?, replacement_key_id = ? WHERE key_id = ?`,
+		revokedAt, reason, replacement, string(keyID))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE domain_keys SET revoked_at = ?, revocation_reason = ?, replacement_key_id = ? WHERE key_id = ?`,
+		revokedAt, reason, replacement, string(keyID))
+	return err
+}
+
+// LookupDeviceCertificate returns the device certificate keyed by the
+// device's public-key fingerprint. The fingerprint is the SQL primary
+// key: callers that have a (device_id) only must look up via a
+// separate index, but this server's flow always carries the
+// fingerprint at the points where the cert is needed.
+func (s *SQLiteStore) LookupDeviceCertificate(ctx context.Context, deviceKeyID keys.Fingerprint) (*keys.DeviceCertificate, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT user_id, device_id, device_public_key, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json
+		   FROM device_certificates WHERE device_key_id = ?`,
+		string(deviceKeyID))
+
+	var (
+		account, deviceID, devicePub, issuedBy, scopeJSON, issuedAtStr, sigJSON string
+		expiresAt                                                               sql.NullString
+	)
+	err := row.Scan(&account, &deviceID, &devicePub, &issuedBy, &scopeJSON, &issuedAtStr, &expiresAt, &sigJSON)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cert := &keys.DeviceCertificate{
+		Type:            "SEMP_DEVICE_CERTIFICATE",
+		Version:         "1.0.0",
+		DeviceID:        deviceID,
+		DevicePublicKey: devicePub,
+		Account:         account,
+		IssuedBy:        issuedBy,
+	}
+	cert.IssuedAt, _ = time.Parse(time.RFC3339, issuedAtStr)
+	if expiresAt.Valid {
+		cert.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt.String)
+	}
+	_ = json.Unmarshal([]byte(scopeJSON), &cert.Scope)
+	_ = json.Unmarshal([]byte(sigJSON), &cert.Signature)
+	return cert, nil
+}
+
+// PutDeviceCertificate stores a device certificate. The SQL primary
+// key (device_key_id) is the fingerprint of cert.DevicePublicKey,
+// computed at write time so the cert struct does not need to carry it.
+func (s *SQLiteStore) PutDeviceCertificate(ctx context.Context, cert *keys.DeviceCertificate) error {
+	scopeJSON, _ := json.Marshal(cert.Scope)
+	sigJSON, _ := json.Marshal(cert.Signature)
+	expiresAt := ""
+	if !cert.ExpiresAt.IsZero() {
+		expiresAt = cert.ExpiresAt.Format(time.RFC3339)
+	}
+	deviceKeyID, err := devicePubKeyFingerprint(cert.DevicePublicKey)
+	if err != nil {
+		return fmt.Errorf("store: derive device key fingerprint: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO device_certificates
+		 (device_key_id, user_id, device_id, device_public_key, issuing_device_key_id, scope_json, issued_at, expires_at, signature_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(deviceKeyID), cert.Account, cert.DeviceID, cert.DevicePublicKey,
+		cert.IssuedBy, string(scopeJSON),
+		cert.IssuedAt.Format(time.RFC3339), expiresAt, string(sigJSON))
+	return err
+}
+
+// devicePubKeyFingerprint base64-decodes pubB64 and returns
+// keys.Compute over the bytes. Returns an error when the input is
+// empty or not valid base64.
+func devicePubKeyFingerprint(pubB64 string) (keys.Fingerprint, error) {
+	if pubB64 == "" {
+		return "", fmt.Errorf("device_public_key is empty")
+	}
+	pub, err := base64.StdEncoding.DecodeString(pubB64)
+	if err != nil {
+		return "", fmt.Errorf("device_public_key base64: %w", err)
+	}
+	return keys.Compute(pub), nil
+}
+
+// --- SharedStore methods (for inboxd.Forwarder) ---
+
+// PutDomainKey stores a peer domain's signing public key and returns its fingerprint.
+func (s *SQLiteStore) PutDomainKey(domain string, pub []byte) keys.Fingerprint {
+	fp := keys.Compute(pub)
+	now := time.Now().UTC().Format(time.RFC3339)
+	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO domain_keys
+		 (domain, key_type, algorithm, public_key, key_id, created_at, expires_at)
+		 VALUES (?, 'signing', 'ed25519', ?, ?, ?, ?)`,
+		domain, pub, string(fp), now, expires); err != nil {
+		log.Printf("store: PutDomainKey %s: %v", domain, err)
+	}
+	return fp
+}
+
+// --- Server-specific helpers ---
+
+// PutDomainKeyPair stores a domain key with its private key.
+// If a master key is configured, the private key is encrypted at rest.
+func (s *SQLiteStore) PutDomainKeyPair(domain, keyType, algorithm string, pub, priv []byte) keys.Fingerprint {
+	fp := keys.Compute(pub)
+	now := time.Now().UTC().Format(time.RFC3339)
+	expires := time.Now().UTC().Add(2 * 365 * 24 * time.Hour).Format(time.RFC3339)
+	ct, salt, nonce, encErr := s.encryptIfNeeded(priv, string(fp))
+	if encErr != nil {
+		log.Printf("store: PutDomainKeyPair encrypt %s/%s: %v", domain, keyType, encErr)
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO domain_keys
+		 (domain, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		domain, keyType, algorithm, pub, ct, salt, nonce, string(fp), now, expires); err != nil {
+		log.Printf("store: PutDomainKeyPair %s/%s: %v", domain, keyType, err)
+	}
+	return fp
+}
+
+// LoadDomainPrivateKey retrieves the private key for a domain key type.
+// Decrypts automatically if the key was stored encrypted.
+func (s *SQLiteStore) LoadDomainPrivateKey(domain, keyType string) ([]byte, keys.Fingerprint, error) {
+	var priv []byte
+	var keyID string
+	var salt, nonce []byte
+	err := s.db.QueryRow(
+		`SELECT private_key, key_salt, key_nonce, key_id FROM domain_keys WHERE domain = ? AND key_type = ?`,
+		domain, keyType).Scan(&priv, &salt, &nonce, &keyID)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce, keyID)
+	if err != nil {
+		return nil, "", err
+	}
+	return plaintext, keys.Fingerprint(keyID), nil
+}
+
+// PutUserKeyPair stores a user key with its private key.
+// If a master key is configured, the private key is encrypted at rest.
+func (s *SQLiteStore) PutUserKeyPair(address string, kt keys.Type, algorithm string, pub, priv []byte) keys.Fingerprint {
+	fp := keys.Compute(pub)
+	now := time.Now().UTC().Format(time.RFC3339)
+	expires := time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	ct, salt, nonce, encErr := s.encryptIfNeeded(priv, string(fp))
+	if encErr != nil {
+		log.Printf("store: PutUserKeyPair encrypt %s/%s: %v", address, kt, encErr)
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO user_keys
+		 (address, key_type, algorithm, public_key, private_key, key_salt, key_nonce, key_id, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		address, string(kt), algorithm, pub, ct, salt, nonce, string(fp), now, expires); err != nil {
+		log.Printf("store: PutUserKeyPair %s/%s: %v", address, kt, err)
+	}
+	return fp
+}
+
+// LoadUserPrivateKey retrieves a user's private key by address and type.
+// Decrypts automatically if the key was stored encrypted.
+func (s *SQLiteStore) LoadUserPrivateKey(address string, kt keys.Type) ([]byte, keys.Fingerprint, error) {
+	var priv []byte
+	var keyID string
+	var salt, nonce []byte
+	err := s.db.QueryRow(
+		`SELECT private_key, key_salt, key_nonce, key_id FROM user_keys WHERE address = ? AND key_type = ? AND revoked_at IS NULL`,
+		address, string(kt)).Scan(&priv, &salt, &nonce, &keyID)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	plaintext, err := s.decryptIfNeeded(priv, salt, nonce, keyID)
+	if err != nil {
+		return nil, "", err
+	}
+	return plaintext, keys.Fingerprint(keyID), nil
+}
+
+// LoadUserPublicKey retrieves a user's public key by address and type.
+func (s *SQLiteStore) LoadUserPublicKey(address string, kt keys.Type) ([]byte, keys.Fingerprint, error) {
+	var pub []byte
+	var keyID string
+	err := s.db.QueryRow(
+		`SELECT public_key, key_id FROM user_keys WHERE address = ? AND key_type = ? AND revoked_at IS NULL`,
+		address, string(kt)).Scan(&pub, &keyID)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	return pub, keys.Fingerprint(keyID), err
+}
+
+// LoadDomainPublicKey retrieves a domain's public key by type.
+func (s *SQLiteStore) LoadDomainPublicKey(domain, keyType string) ([]byte, keys.Fingerprint, error) {
+	var pub []byte
+	var keyID string
+	err := s.db.QueryRow(
+		`SELECT public_key, key_id FROM domain_keys WHERE domain = ? AND key_type = ?`,
+		domain, keyType).Scan(&pub, &keyID)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	return pub, keys.Fingerprint(keyID), err
+}
+
+// HasDomainKeys reports whether signing and encryption keys exist for domain.
+func (s *SQLiteStore) HasDomainKeys(domain string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM domain_keys WHERE domain = ?`, domain).Scan(&count)
+	return count >= 2, err
+}
+
+// HasUserKeys reports whether any keys exist for address.
+func (s *SQLiteStore) HasUserKeys(address string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM user_keys WHERE address = ?`, address).Scan(&count)
+	return count > 0, err
+}
+
+// DB returns the underlying database handle.
+func (s *SQLiteStore) DB() *sql.DB { return s.db }

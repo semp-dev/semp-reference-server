@@ -1,0 +1,65 @@
+# SEMP Reference Server Configuration
+# Copy this file to semp.toml and adjust for your deployment.
+
+# The domain this server operates for. All user addresses must be @domain.
+domain = "example.com"
+
+# Address and port the server listens on.
+listen_addr = ":8443"
+
+# TLS certificate and private key. Omit both for plain HTTP (dev only).
+[tls]
+# cert_file = "/etc/semp/cert.pem"
+# key_file  = "/etc/semp/key.pem"
+# quic_addr = ":8443"   # UDP listen address for QUIC/HTTP3 (requires cert/key)
+
+# Cryptographic algorithm suite.
+# "pq-kyber768-x25519" (post-quantum hybrid, recommended)
+# "x25519-chacha20-poly1305" (baseline)
+[crypto]
+suite = "pq-kyber768-x25519"
+
+# SQLite database path. Created automatically on first run.
+[database]
+path = "semp.db"
+# master_key = "your-secret-master-key"   # Encrypts private keys at rest (AES-256-GCM + Argon2id)
+
+# Provisioned user accounts. Users register their public keys via
+# POST /v1/register with their address and password.
+[[users]]
+address  = "alice@example.com"
+password = "changeme"
+
+[[users]]
+address  = "bob@example.com"
+password = "changeme"
+
+# Federation settings for cross-domain delivery.
+[federation]
+session_ttl = 3600   # Federation session lifetime in seconds.
+retention   = "7d"   # Message retention declaration to peers.
+
+# Federation peers. Only domain is required — endpoint and signing key
+# are resolved automatically via DNS SRV and well-known endpoints.
+# [[federation.peers]]
+# domain = "other.example"
+# endpoint = "wss://other.example/v1/federate"       # optional
+# domain_signing_key = "base64-encoded-ed25519-key"   # optional
+
+# Operator policy for client sessions.
+[policy]
+session_ttl     = 300                # Client session TTL in seconds.
+blocked_domains = []                 # Domains to reject at handshake.
+permissions     = ["send", "receive"]
+
+# Proof-of-work challenge gating. Clients must solve a SHA256 PoW
+# challenge before the handshake completes.
+[policy.pow]
+enabled    = false
+difficulty = 20    # Leading zero bits required in the hash.
+ttl        = 300   # Challenge validity in seconds.
+
+# Logging configuration.
+[logging]
+level  = "info"   # debug, info, warn, error
+format = "text"   # text or json

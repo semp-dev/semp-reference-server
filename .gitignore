@@ -1,1 +1,29 @@
-/deploy/dist/
+# Compiled binaries
+semp-server
+impl/go/semp-server
+impl/go/cmd/semp-server/semp-server
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Local config (preserve only the example)
+*.toml
+!**/config.example.toml
+!**/semp.toml.example
+!shared/deploy/semp.toml
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Plesk artifacts
+shared/deploy/dist/
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/

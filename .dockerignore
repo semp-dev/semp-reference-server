@@ -1,8 +1,26 @@
+.git
+.github
+.claude
+.vscode
+.idea
+.DS_Store
+
+# Build artifacts
+**/dist/
+**/node_modules/
+**/coverage/
+*.tsbuildinfo
+
+# Compiled binaries
+semp-server
+impl/**/semp-server
+
+# SQLite
 *.db
 *.db-wal
 *.db-shm
-semp-server
-semp.toml
-.git
-.claude
-.gitignore
+
+# Local TOML
+*.toml
+!**/config.example.toml
+!shared/deploy/semp.toml

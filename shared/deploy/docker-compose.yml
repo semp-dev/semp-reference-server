@@ -1,0 +1,14 @@
+services:
+  semp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8443"
+    volumes:
+      - semp-data:/var/lib/semp
+      - ./semp.toml:/etc/semp/semp.toml:ro
+
+volumes:
+  semp-data:
