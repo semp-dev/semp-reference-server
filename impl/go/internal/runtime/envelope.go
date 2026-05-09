@@ -283,9 +283,26 @@ func handleFederationSubmission(ctx context.Context, conn transport.Conn, env *e
 	// text with the federation-specific "endpoint does not multi-hop"
 	// for clarity in cross-domain logs. For every delivered outcome,
 	// issue a SEMP_DELIVERY_RECEIPT inline per DELIVERY.md section
-	// 1.1.1.5.
+	// 1.1.1.5. Silent outcomes (per-recipient block-list silent or
+	// receipt-issuance failure) are dropped from the wire response per
+	// DELIVERY.md section 1: there is no `silent` wire value, so the
+	// peer sender's per-recipient timeout produces a sender-side
+	// `silent` classification.
+	out := make([]delivery.SubmissionResult, 0, len(pipeResult.Results))
 	for i := range pipeResult.Results {
 		switch pipeResult.Results[i].Status {
+		case semp.StatusSilent:
+			// DELIVERY.md section 1.3: withhold any wire response
+			// for a silent disposition. The peer's per-recipient
+			// timeout synthesizes the silent classification.
+			if deps.Logger != nil {
+				deps.Logger.Info("federated silent block: withholding wire entry",
+					"peer", deps.Identity,
+					"envelope", env.Postmark.ID,
+					"recipient", pipeResult.Results[i].Recipient,
+				)
+			}
+			continue
 		case semp.StatusRecipientNotFound:
 			pipeResult.Results[i].Reason = "federation endpoint does not multi-hop"
 		case semp.StatusDelivered:
@@ -298,24 +315,25 @@ func handleFederationSubmission(ctx context.Context, conn transport.Conn, env *e
 			}
 			receipt, err := issueDeliveryReceipt(deps, env)
 			if err != nil {
+				// DELIVERY.md section 1.1.1.5 forbids returning
+				// `delivered` without a verifiable receipt, so
+				// withhold this recipient's wire entry. The peer's
+				// per-recipient timeout produces the sender-side
+				// silent classification (DELIVERY.md section 1.5).
 				if deps.Logger != nil {
-					deps.Logger.Warn("issue receipt failed; demoting to silent",
+					deps.Logger.Warn("issue receipt failed; withholding wire entry",
 						"peer", deps.Identity,
 						"envelope", env.Postmark.ID,
 						"err", err,
 					)
 				}
-				pipeResult.Results[i] = delivery.SubmissionResult{
-					Recipient: pipeResult.Results[i].Recipient,
-					Status:    semp.StatusSilent,
-					Reason:    "receipt issuance failed",
-				}
-			} else {
-				pipeResult.Results[i].Receipt = receipt
+				continue
 			}
+			pipeResult.Results[i].Receipt = receipt
 		}
+		out = append(out, pipeResult.Results[i])
 	}
-	resp := delivery.NewSubmissionResponse(env.Postmark.ID, pipeResult.Results)
+	resp := delivery.NewSubmissionResponse(env.Postmark.ID, out)
 	return sendJSON(ctx, conn, resp)
 }
 

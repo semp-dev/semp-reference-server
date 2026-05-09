@@ -367,8 +367,27 @@ async function handleFederationSubmissionEnvelope(
 
   // Override the pipeline's generic "recipient is not local" reason
   // text with the federation-specific "endpoint does not multi-hop".
+  // Silent outcomes (per-recipient block-list silent or
+  // receipt-issuance failure) are dropped from the wire response per
+  // DELIVERY.md section 1: there is no `silent` wire value, so the
+  // peer sender's per-recipient timeout produces a sender-side
+  // `silent` classification.
   const out: SubmissionResult[] = [];
   for (const row of result.results) {
+    if (row.status === "silent") {
+      // DELIVERY.md section 1.3: withhold any wire response for a
+      // silent disposition. The peer's per-recipient timeout
+      // synthesizes the silent classification.
+      deps.logger?.info(
+        {
+          peer: deps.identity,
+          envelope: env.postmark.id,
+          recipient: row.recipient,
+        },
+        "federated silent block: withholding wire entry",
+      );
+      continue;
+    }
     if (row.reason_code === "recipient_not_found") {
       out.push({
         ...row,
@@ -396,19 +415,18 @@ async function handleFederationSubmissionEnvelope(
         );
         out.push({ ...row, receipt });
       } catch (err) {
+        // DELIVERY.md section 1.1.1.5 forbids returning `delivered`
+        // without a verifiable receipt, so withhold this recipient's
+        // wire entry. The peer's per-recipient timeout produces the
+        // sender-side silent classification (DELIVERY.md section 1.5).
         deps.logger?.warn(
           {
             peer: deps.identity,
             envelope: env.postmark.id,
             err: err instanceof Error ? err.message : String(err),
           },
-          "issue receipt failed; demoting to silent",
+          "issue receipt failed; withholding wire entry",
         );
-        out.push({
-          recipient: row.recipient,
-          status: "silent",
-          reason: "receipt issuance failed",
-        });
       }
       continue;
     }
