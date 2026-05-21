@@ -14,6 +14,7 @@ import { createServer, type Server as HttpServer, type IncomingMessage, type Ser
 import { sign as ed25519Sign } from "@sempdev/semp/keys";
 import { Forwarder } from "@sempdev/semp/delivery";
 import {
+  type FederationSuite,
   FederationResponder,
   TrustingDomainVerifier,
   runServer,
@@ -171,9 +172,10 @@ export async function newServer(
   };
   const forwarder = new Forwarder({
     capabilities: {
-      encryption_algorithms: [BASELINE_SUITE],
+      encryption_algorithms: advertisedSuites(cfg.crypto.suite),
       extensions: [],
     },
+    suite: cfg.crypto.suite as FederationSuite,
     localDomain: cfg.domain,
     localServerID: cfg.domain,
     localDomainSeed: domainKeys.signPriv,
@@ -480,9 +482,9 @@ async function runFederationConnection(
   deps.logger.info({ peer }, "federation peer connected");
   try {
     const responder = new FederationResponder({
-      suite: BASELINE_SUITE,
+      suite: deps.suite as FederationSuite,
       capabilities: {
-        encryption_algorithms: [BASELINE_SUITE],
+        encryption_algorithms: advertisedSuites(deps.suite),
         extensions: [],
       },
       localDomain: deps.domain,
