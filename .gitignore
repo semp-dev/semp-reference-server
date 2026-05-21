@@ -27,3 +27,4 @@ shared/deploy/dist/
 .DS_Store
 .vscode/
 .idea/
+.claude/
