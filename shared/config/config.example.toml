@@ -39,7 +39,7 @@ password = "changeme"
 session_ttl = 3600   # Federation session lifetime in seconds.
 retention   = "7d"   # Message retention declaration to peers.
 
-# Federation peers. Only domain is required — endpoint and signing key
+# Federation peers. Only domain is required -- endpoint and signing key
 # are resolved automatically via DNS SRV and well-known endpoints.
 # [[federation.peers]]
 # domain = "other.example"

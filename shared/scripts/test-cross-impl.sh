@@ -72,7 +72,7 @@ run_pair() {
     #   6. Run register, send (to self), fetch
     #   7. grep "Subject: cross-impl-test-${s}-${c}" in the fetch output
     #   8. Stop server, clean up
-    ko "pair (${s}, ${c}) — not yet implemented; see TODO in run_pair()"
+    ko "pair (${s}, ${c}) -- not yet implemented; see TODO in run_pair()"
 }
 
 for s in go ts; do

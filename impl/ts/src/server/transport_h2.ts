@@ -1,6 +1,6 @@
 /**
  * HTTP/1.1+ POST adapter that emulates the SEMP turn-based H2
- * transport. Each POST is one Recv → Send cycle on the per-session
+ * transport. Each POST is one Recv -> Send cycle on the per-session
  * virtual transport identified by `Semp-Session-Id`.
  *
  * Mirrors impl/go/internal/server/transport_h2.go.

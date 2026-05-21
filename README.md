@@ -57,12 +57,12 @@ The Go and TS server implementations are wire-compatible. Tested locally end-to-
 
 | Scenario | Verdict |
 |---|---|
-| Go server accepts Go client (same-impl) | ✅ |
-| TS server accepts TS client (same-impl) | ✅ |
-| Go server accepts TS client | ✅ |
-| TS server accepts Go client | ✅ |
-| Go server federates to TS server | ✅ (alice@a.local sends to bob@b.local; envelope forwarded; bob's enclosure decrypts and `sender_signature` verifies on Go reader) |
-| TS server federates to Go server | ✅ (bob@b.local sends to alice@a.local; reverse direction passes the same shape) |
+| Go server accepts Go client (same-impl) | pass |
+| TS server accepts TS client (same-impl) | pass |
+| Go server accepts TS client | pass |
+| TS server accepts Go client | pass |
+| Go server federates to TS server | pass (alice@a.local sends to bob@b.local; envelope forwarded; bob's enclosure decrypts and `sender_signature` verifies on Go reader) |
+| TS server federates to Go server | pass (bob@b.local sends to alice@a.local; reverse direction passes the same shape) |
 
 **Versions** (the four pieces that have to agree byte-for-byte): `semp-go v0.5.1`, `semp-ts v0.5.2`, `semp-reference-server` (this repo) `master`, `semp-reference-client` `master`. Each impl reads the same TOML, the same SQLite schema, and the same cross-language test vectors at `semp-spec/vectors/v1.0.0/`.
 

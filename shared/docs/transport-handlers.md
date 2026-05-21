@@ -31,7 +31,7 @@ conformance gap.
 ## Per-impl adapter responsibility
 
 semp-go v0.5.0 deleted the `transport/{ws,h2}.NewHandler` factories;
-each consumer writes its own `net/http`→`transport.Conn` adapter. The
+each consumer writes its own `net/http`->`transport.Conn` adapter. The
 Go impl's adapter lives at `impl/go/internal/server/transport_*.go`;
 the TS impl's at `impl/ts/src/server/transport_*.ts`.
 
@@ -40,5 +40,5 @@ Both adapters MUST:
 - Cap inbound message size at the `[crypto].max_envelope_size` value
   (default 25 MiB) BEFORE handing bytes to the protocol layer.
 - For HTTP/2: maintain a per-`Semp-Session-Id` session map; each POST
-  is one Send → 200-response cycle. New sessions mint a ULID and spawn
+  is one Send -> 200-response cycle. New sessions mint a ULID and spawn
   the post-handshake goroutine / async function.

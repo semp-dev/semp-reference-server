@@ -43,8 +43,8 @@ This starts `semp-server` bound to `127.0.0.1:18443`, persists data in `/opt/sem
 In the Plesk panel:
 
 1. Add or select your domain (e.g. `semp.example.com`).
-2. **Domain → SSL/TLS Certificates** → install free Let's Encrypt cert. Enable **Redirect from HTTP to HTTPS**.
-3. **Domain → Apache & nginx Settings → Additional nginx directives**: paste the contents of `plesk-nginx.conf` (the file sitting next to this README).
+2. **Domain -> SSL/TLS Certificates** -> install free Let's Encrypt cert. Enable **Redirect from HTTP to HTTPS**.
+3. **Domain -> Apache & nginx Settings -> Additional nginx directives**: paste the contents of `plesk-nginx.conf` (the file sitting next to this README).
 4. Same screen, uncheck:
    - **Smart static files processing**
    - **Serve static files directly by nginx**
@@ -96,4 +96,4 @@ The installer stops the old container, starts the new one against the same `/opt
 docker logs -f semp-server
 ```
 
-Or **Plesk → Docker → Containers → semp-server → Logs**.
+Or **Plesk -> Docker -> Containers -> semp-server -> Logs**.

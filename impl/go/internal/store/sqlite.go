@@ -72,7 +72,7 @@ func (s *SQLiteStore) LookupDomainKey(ctx context.Context, domain string) (*keys
 	if rec != nil || err != nil {
 		return rec, err
 	}
-	// Cache miss — try auto-fetch for remote domains only.
+	// Cache miss -- try auto-fetch for remote domains only.
 	if s.domainKeyFetcher == nil || domain == s.localDomain {
 		return nil, nil
 	}
